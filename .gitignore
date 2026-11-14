@@ -1,0 +1,29 @@
+# Claves y configuraciones privadas
+claves.txt
+*.jks
+.env
+.env.*
+!.env.example
+
+# Dependencias y compilaciones
+node_modules/
+dist/
+dist-ssr/
+
+# Archivos temporales de Supabase
+frontend/supabase/.temp/
+
+# Archivos de editor
+.vscode/
+.idea/
+
+# Respaldos locales
+*backup*.sql
+*estructura*.sql
+*datos*.sql
+
+# Archivos generados de Android
+frontend/android/.gradle/
+frontend/android/build/
+frontend/android/app/build/
+frontend/android/app/release/
