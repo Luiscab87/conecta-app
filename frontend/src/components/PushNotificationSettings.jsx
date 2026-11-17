@@ -1,6 +1,10 @@
 
 import { useEffect, useState } from 'react'
+import { Capacitor } from '@capacitor/core'
+import { FirebaseMessaging } from '@capacitor-firebase/messaging'
 import { supabase } from '../lib/supabase'
+
+const DEVICE_PUSH_KEY = 'conecta_android_push_enabled'
 
 const DEFAULT_PREFERENCES = {
   push_enabled: false,
@@ -18,63 +22,127 @@ function urlBase64ToUint8Array(base64String) {
     .replace(/_/g, '/')
 
   const rawData = window.atob(base64)
-  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)))
-}
 
-function arrayBufferToBase64Url(buffer) {
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
-
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte)
-  })
-
-  return window.btoa(binary)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
+  return Uint8Array.from(
+    [...rawData].map((char) => char.charCodeAt(0))
+  )
 }
 
 export default function PushNotificationSettings({ userId }) {
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES)
+  const [devicePushEnabled, setDevicePushEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
-  const supported =
+  const isAndroid =
+    Capacitor.isNativePlatform() &&
+    Capacitor.getPlatform() === 'android'
+
+  const supported = isAndroid || (
     typeof window !== 'undefined' &&
     'Notification' in window &&
     'serviceWorker' in navigator &&
     'PushManager' in window
+  )
 
   useEffect(() => {
     if (!userId) return
+
+    let active = true
 
     async function loadPreferences() {
       setLoading(true)
       setError('')
 
-      const { data, error: loadError } = await supabase
-        .from('notification_preferences')
-        .select('*')
-        .eq('user_id', userId)
-        .maybeSingle()
+      try {
+        const { data, error: loadError } = await supabase
+          .from('notification_preferences')
+          .select('*')
+          .eq('user_id', userId)
+          .maybeSingle()
 
-      if (loadError) {
-        setError('No pudimos cargar tus preferencias.')
-      } else if (data) {
-        setPreferences({
-          ...DEFAULT_PREFERENCES,
-          ...data,
-        })
+        if (loadError) throw loadError
+
+        if (!active) return
+
+        if (data) {
+          setPreferences({
+            ...DEFAULT_PREFERENCES,
+            ...data,
+          })
+        }
+
+        if (isAndroid) {
+          const savedDevicePreference =
+            localStorage.getItem(DEVICE_PUSH_KEY) === 'true'
+
+          const { token } = await FirebaseMessaging.getToken()
+
+          if (!token) {
+            throw new Error('No pudimos obtener el token del dispositivo.')
+          }
+
+          const { data: device, error: deviceError } = await supabase
+            .from('android_push_tokens')
+            .select('push_enabled')
+            .eq('user_id', userId)
+            .eq('fcm_token', token)
+            .maybeSingle()
+
+          if (deviceError) throw deviceError
+
+          if (device) {
+            localStorage.setItem(
+              DEVICE_PUSH_KEY,
+              String(device.push_enabled)
+            )
+
+            if (active) {
+              setDevicePushEnabled(device.push_enabled)
+            }
+          } else if (savedDevicePreference) {
+            // Recuperar la vinculación después de iniciar sesión.
+            const { error: registerError } = await supabase
+              .from('android_push_tokens')
+              .upsert(
+                {
+                  user_id: userId,
+                  fcm_token: token,
+                  device_label: 'Android - Conectá',
+                  push_enabled: true,
+                  updated_at: new Date().toISOString(),
+                },
+                { onConflict: 'fcm_token' }
+              )
+
+            if (registerError) throw registerError
+
+            if (active) {
+              setDevicePushEnabled(true)
+            }
+          } else if (active) {
+            setDevicePushEnabled(false)
+          }
+        }
+      } catch (err) {
+        console.error('Error cargando preferencias:', err)
+
+        if (active) {
+          setError('No pudimos cargar la configuración de notificaciones.')
+        }
+      } finally {
+        if (active) setLoading(false)
       }
-
-      setLoading(false)
     }
 
     loadPreferences()
-  }, [userId])
+
+    return () => {
+      active = false
+    }
+  }, [userId, isAndroid])
 
   async function savePreferences(nextPreferences) {
     const dataToSave = {
@@ -87,9 +155,7 @@ export default function PushNotificationSettings({ userId }) {
       .from('notification_preferences')
       .upsert(dataToSave, { onConflict: 'user_id' })
 
-    if (saveError) {
-      throw saveError
-    }
+    if (saveError) throw saveError
 
     setPreferences(nextPreferences)
   }
@@ -107,11 +173,88 @@ export default function PushNotificationSettings({ userId }) {
       await savePreferences(nextPreferences)
       setMessage('Preferencias guardadas.')
     } catch (err) {
+      console.error(err)
       setError('No pudimos guardar el cambio. Intentá nuevamente.')
     }
   }
 
-  async function enablePush() {
+  async function enableAndroidPush() {
+    setWorking(true)
+    setError('')
+    setMessage('')
+
+    try {
+      const permission = await FirebaseMessaging.requestPermissions()
+
+      if (permission.receive !== 'granted') {
+        throw new Error(
+          'No se otorgó permiso para enviar notificaciones.'
+        )
+      }
+
+      const { token } = await FirebaseMessaging.getToken()
+
+      if (!token) {
+        throw new Error('Firebase no pudo generar el token del dispositivo.')
+      }
+
+      const { error: subscriptionError } = await supabase
+        .from('android_push_tokens')
+        .upsert(
+          {
+            user_id: userId,
+            fcm_token: token,
+            device_label: 'Android - Conectá',
+            push_enabled: true,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'fcm_token' }
+        )
+
+      if (subscriptionError) throw subscriptionError
+
+      localStorage.setItem(DEVICE_PUSH_KEY, 'true')
+      setDevicePushEnabled(true)
+      setMessage('¡Notificaciones activadas en este dispositivo!')
+    } catch (err) {
+      console.error('Error activando FCM:', err)
+      setError(err.message || 'No pudimos activar las notificaciones.')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  async function disableAndroidPush() {
+    setWorking(true)
+    setError('')
+    setMessage('')
+
+    try {
+      const { token } = await FirebaseMessaging.getToken()
+
+      const { error: updateError } = await supabase
+        .from('android_push_tokens')
+        .update({
+          push_enabled: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId)
+        .eq('fcm_token', token)
+
+      if (updateError) throw updateError
+
+      localStorage.setItem(DEVICE_PUSH_KEY, 'false')
+      setDevicePushEnabled(false)
+      setMessage('Notificaciones desactivadas en este dispositivo.')
+    } catch (err) {
+      console.error('Error desactivando FCM:', err)
+      setError('No pudimos desactivar las notificaciones correctamente.')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  async function enableWebPush() {
     setWorking(true)
     setError('')
     setMessage('')
@@ -136,7 +279,6 @@ export default function PushNotificationSettings({ userId }) {
       }
 
       const publicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY
-      console.log('¿Se cargó la clave VAPID?', Boolean(publicKey))
 
       if (!publicKey) {
         throw new Error('Falta configurar la clave pública de notificaciones.')
@@ -160,7 +302,6 @@ export default function PushNotificationSettings({ userId }) {
       }
 
       const subscriptionData = subscription.toJSON()
-
       const p256dh = subscriptionData.keys?.p256dh
       const auth = subscriptionData.keys?.auth
 
@@ -185,9 +326,7 @@ export default function PushNotificationSettings({ userId }) {
           { onConflict: 'endpoint' }
         )
 
-      if (subscriptionError) {
-        throw subscriptionError
-      }
+      if (subscriptionError) throw subscriptionError
 
       await savePreferences({
         ...preferences,
@@ -196,14 +335,14 @@ export default function PushNotificationSettings({ userId }) {
 
       setMessage('¡Notificaciones activadas en este dispositivo!')
     } catch (err) {
-      console.error('Error activando notificaciones:', err)
+      console.error('Error activando Web Push:', err)
       setError(err.message || 'No pudimos activar las notificaciones.')
     } finally {
       setWorking(false)
     }
   }
 
-  async function disablePush() {
+  async function disableWebPush() {
     setWorking(true)
     setError('')
     setMessage('')
@@ -215,17 +354,15 @@ export default function PushNotificationSettings({ userId }) {
       if (subscription) {
         const endpoint = subscription.endpoint
 
-        await subscription.unsubscribe()
-
         const { error: deleteError } = await supabase
           .from('push_subscriptions')
           .delete()
           .eq('user_id', userId)
           .eq('endpoint', endpoint)
 
-        if (deleteError) {
-          throw deleteError
-        }
+        if (deleteError) throw deleteError
+
+        await subscription.unsubscribe()
       }
 
       await savePreferences({
@@ -235,10 +372,26 @@ export default function PushNotificationSettings({ userId }) {
 
       setMessage('Notificaciones desactivadas en este dispositivo.')
     } catch (err) {
-      console.error('Error desactivando notificaciones:', err)
+      console.error('Error desactivando Web Push:', err)
       setError('No pudimos desactivar las notificaciones correctamente.')
     } finally {
       setWorking(false)
+    }
+  }
+
+  async function handleToggle(checked) {
+    if (isAndroid) {
+      if (checked) {
+        await enableAndroidPush()
+      } else {
+        await disableAndroidPush()
+      }
+    } else {
+      if (checked) {
+        await enableWebPush()
+      } else {
+        await disableWebPush()
+      }
     }
   }
 
@@ -248,27 +401,16 @@ export default function PushNotificationSettings({ userId }) {
     return <p>Cargando preferencias de notificaciones...</p>
   }
 
+  const pushEnabled = isAndroid
+    ? devicePushEnabled
+    : preferences.push_enabled
+
   const categories = [
-    {
-      key: 'messages',
-      label: 'Mensajes y respuestas',
-    },
-    {
-      key: 'registration_requests',
-      label: 'Solicitudes de participación',
-    },
-    {
-      key: 'registration_decisions',
-      label: 'Inscripciones aceptadas o rechazadas',
-    },
-    {
-      key: 'activity_updates',
-      label: 'Novedades de actividades',
-    },
-    {
-      key: 'admin_notices',
-      label: 'Avisos de administración',
-    },
+    { key: 'messages', label: 'Mensajes y respuestas' },
+    { key: 'registration_requests', label: 'Solicitudes de participación' },
+    { key: 'registration_decisions', label: 'Inscripciones aceptadas o rechazadas' },
+    { key: 'activity_updates', label: 'Novedades de actividades' },
+    { key: 'admin_notices', label: 'Avisos de administración' },
   ]
 
   return (
@@ -290,15 +432,9 @@ export default function PushNotificationSettings({ userId }) {
         <label>
           <input
             type="checkbox"
-            checked={preferences.push_enabled}
+            checked={pushEnabled}
             disabled={working || !supported}
-            onChange={(event) => {
-              if (event.target.checked) {
-                enablePush()
-              } else {
-                disablePush()
-              }
-            }}
+            onChange={(event) => handleToggle(event.target.checked)}
           />
           <strong>Activar notificaciones push</strong>
         </label>
@@ -311,8 +447,8 @@ export default function PushNotificationSettings({ userId }) {
           <label key={category.key} className="push-category">
             <input
               type="checkbox"
-              checked={preferences[category.key]}
-              disabled={!preferences.push_enabled || working}
+              checked={Boolean(preferences[category.key])}
+              disabled={working}
               onChange={(event) =>
                 handleCategoryChange(category.key, event.target.checked)
               }
@@ -323,9 +459,7 @@ export default function PushNotificationSettings({ userId }) {
       </div>
 
       {working && <p>Actualizando configuración...</p>}
-
       {message && <p role="status">{message}</p>}
-
       {error && <p role="alert">{error}</p>}
 
       <small>

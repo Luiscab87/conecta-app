@@ -4367,207 +4367,367 @@ textarea:focus {
   }
 }
 
-/* =========================================================
-   CONECTÁ — TARJETAS: JERARQUÍA Y ALINEACIÓN DE CONTENIDO
-   Última capa visual. No modifica lógica ni datos.
-   ========================================================= */
-
-.activity-card {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow: hidden;
-  padding: 0 0 20px;
-  border: 1px solid #e8e0ee;
-  border-radius: 20px;
-  background: #fff;
-  box-shadow: 0 5px 18px rgba(48, 31, 65, 0.07);
-}
-
-.activity-card .card-image {
-  position: relative;
-  display: block;
-  flex: 0 0 auto;
-  width: 100%;
-  height: 185px;
-  margin: 0 0 17px;
-  overflow: hidden;
-  border-radius: 0;
-  background: #eee7f4;
-}
-
-.activity-card .card-image img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-}
-
-.activity-card .activity-category {
-  align-self: flex-start;
-  max-width: calc(100% - 40px);
-  margin: 0 20px 10px;
-  padding: 6px 12px;
-  border: 1px solid #e9def3;
-  border-radius: 999px;
-  background: #f4edfa;
-  color: #684292;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.35;
-}
-
-.activity-card .activity-card-title {
-  display: block;
-  margin: 0 20px 10px !important;
-  padding: 0;
-  color: #302044 !important;
-  font-size: 21px !important;
-  font-weight: 750 !important;
-  line-height: 1.28 !important;
-  letter-spacing: -0.35px !important;
-  text-align: left;
-  text-transform: none !important;
-  overflow-wrap: anywhere;
-  hyphens: auto;
-}
-
-.activity-card .activity-timeline-badge {
-  align-self: flex-start;
-  margin: 0 20px 12px !important;
-  padding: 6px 11px !important;
-  border-radius: 999px;
-  font-size: 12px !important;
-  line-height: 1.3 !important;
-}
-
-.activity-card .activity-confirmed-badge {
-  align-self: flex-start;
-  margin: 0 20px 12px;
-}
-
-.activity-card > p {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  min-height: 0;
-  margin: 0 20px 17px;
-  overflow: hidden;
-  color: #71677b;
-  font-size: 14px;
-  line-height: 1.55;
-  text-align: left;
-}
-
-.activity-card .activity-details {
-  margin: 0 20px;
-  padding: 14px 0 0;
-  border-top: 1px solid #eee8f2;
-}
-
-.activity-card .activity-details p {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 8px 0;
-  color: #5e5369;
-  font-size: 13px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.activity-card .approval-label {
-  align-self: flex-start;
-  margin: 12px 20px 0;
-}
-
+/* Ajuste: botones de acción dentro de las tarjetas de actividades */
 .activity-card .activity-owner-toggle,
-.activity-card .activity-join-button,
+.activity-card .activity-join-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: auto;
+  width: calc(100% - 38px);
+  max-width: calc(100% - 38px);
+  min-width: 0;
+  min-height: 46px;
+  box-sizing: border-box;
+  margin: 14px 19px 0;
+  padding: 11px 16px;
+  text-align: center;
+  white-space: normal;
+  line-height: 1.25;
+}
+
 .activity-card .activity-registration-result {
-  align-self: stretch;
-  margin: 14px 20px 0;
+  width: calc(100% - 38px);
+  max-width: calc(100% - 38px);
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 14px 19px 0;
 }
 
 .activity-card .activity-participation-message {
-  margin: 14px 20px 0;
-  border-radius: 14px;
+  box-sizing: border-box;
+  width: 100%;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .activity-card {
-    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-  }
-
-  .activity-card:hover {
-    transform: translateY(-3px);
-    border-color: #d9c8e8;
-    box-shadow: 0 12px 26px rgba(48, 31, 65, .10);
-  }
+/* MI PERFIL — identidad visual lila de Conectá */
+.profile-section{
+  position:relative;
+  isolation:isolate;
+  display:flex;
+  justify-content:center;
+  align-items:flex-start;
+  min-height:calc(100vh - 78px);
+  padding:52px 22px 76px;
+  overflow:hidden;
+  background:
+    radial-gradient(ellipse at 12% 18%, rgba(210,188,255,.48) 0, rgba(210,188,255,0) 38%),
+    radial-gradient(ellipse at 88% 72%, rgba(220,204,255,.52) 0, rgba(220,204,255,0) 42%),
+    linear-gradient(145deg,#f5efff 0%,#eee5ff 48%,#faf7ff 100%);
+}
+.profile-section::before,
+.profile-section::after{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  left:-8%;
+  width:116%;
+  height:210px;
+  border-radius:50%;
+  pointer-events:none;
+}
+.profile-section::before{
+  top:115px;
+  transform:rotate(-5deg);
+  background:rgba(255,255,255,.28);
+  box-shadow:0 34px 0 rgba(202,177,247,.16),0 68px 0 rgba(255,255,255,.18);
+}
+.profile-section::after{
+  bottom:75px;
+  transform:rotate(4deg);
+  background:rgba(255,255,255,.22);
+  box-shadow:0 -34px 0 rgba(197,169,244,.13);
+}
+.profile-section .profile-card{
+  position:relative;
+  z-index:1;
+  width:min(100%,780px);
+  max-width:780px;
+  margin:0 auto;
+  padding:clamp(26px,4vw,44px);
+  overflow:hidden;
+  border:1px solid rgba(255,255,255,.9);
+  border-radius:28px;
+  background:rgba(255,255,255,.78);
+  box-shadow:0 18px 48px rgba(74,39,125,.13),inset 0 1px 0 rgba(255,255,255,.9);
+  -webkit-backdrop-filter:blur(12px);
+  backdrop-filter:blur(12px);
+}
+.profile-section .profile-heading{
+  position:relative;
+  margin:0 0 28px;
+  text-align:center;
+}
+.profile-section .profile-heading h2{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:12px;
+  margin:0 0 8px;
+  color:#32105f;
+  font-size:clamp(27px,3vw,34px);
+  font-weight:800;
+  letter-spacing:-.8px;
+}
+.profile-section .profile-heading h2::before{
+  content:"";
+  display:inline-block;
+  width:30px;
+  height:30px;
+  border:3px solid #7133bd;
+  border-radius:50%;
+  background:radial-gradient(circle at 50% 37%,#7133bd 0 4px,transparent 4.5px),radial-gradient(ellipse at 50% 100%,#7133bd 0 8px,transparent 8.5px);
+  box-sizing:border-box;
+}
+.profile-section .profile-heading p{
+  color:#65527e;
+  font-size:15px;
+}
+.profile-section .avatar-upload{
+  position:relative;
+  margin-bottom:30px;
+  gap:13px;
+}
+.profile-section .avatar-preview{
+  width:124px;
+  height:124px;
+  border:4px solid #fff;
+  outline:2px solid #d9c4ff;
+  background:#eee4ff;
+  box-shadow:0 8px 22px rgba(75,37,126,.16);
+}
+.profile-section .avatar-button{
+  min-height:43px;
+  padding:10px 20px;
+  border:1px solid #e1d1ff;
+  border-radius:13px;
+  background:#eee5ff;
+  color:#5924a2;
+}
+.profile-section .avatar-button:hover{background:#e5d7ff}
+.profile-section .profile-card form{
+  gap:18px 20px;
+}
+.profile-section .profile-card form>label{
+  gap:7px;
+  color:#33204e;
+  font-size:14px;
+}
+.profile-section .profile-card form input:not([type=file]),
+.profile-section .profile-card form select,
+.profile-section .profile-card form textarea{
+  min-height:48px;
+  padding:12px 14px;
+  border:1px solid #cdb9ec;
+  border-radius:12px;
+  background:rgba(255,255,255,.9);
+  color:#2d1d45;
+  transition:border-color .18s,box-shadow .18s,background .18s;
+}
+.profile-section .profile-card form input:focus,
+.profile-section .profile-card form select:focus,
+.profile-section .profile-card form textarea:focus{
+  border-color:#8650cf;
+  background:#fff;
+  box-shadow:0 0 0 3px rgba(126,72,195,.13);
+}
+.profile-section .profile-card form textarea{min-height:118px}
+.profile-section .profile-card form>button[type=submit]{
+  min-width:190px;
+  min-height:48px;
+  border:0;
+  border-radius:13px;
+  background:linear-gradient(135deg,#7939c5,#5420a1);
+  box-shadow:0 7px 16px rgba(93,39,157,.2);
+  color:#fff;
+}
+.profile-section .profile-card form>button[type=submit]:hover{filter:brightness(1.06);transform:translateY(-1px)}
+.profile-section .profile-message{
+  padding:11px 14px;
+  border:1px solid #e1d4f4;
+  border-radius:12px;
+  background:#f6f0ff;
+  color:#5924a2;
+}
+.profile-section .profile-card .profile-close{
+  min-height:44px;
+  margin-top:22px;
+  padding:10px 18px;
+  border:1px solid #cdb4ef;
+  border-radius:12px;
+  background:rgba(255,255,255,.7);
+  color:#5d279f;
+}
+.profile-section .profile-card .profile-close:hover{background:#f0e7ff}
+@media(max-width:620px){
+  .profile-section{min-height:calc(100vh - 68px);padding:25px 12px 42px}
+  .profile-section .profile-card{padding:25px 18px;border-radius:22px}
+  .profile-section .profile-heading{margin-bottom:24px}
+  .profile-section .profile-heading h2{font-size:27px}
+  .profile-section .avatar-preview{width:108px;height:108px}
+  .profile-section .profile-card form{grid-template-columns:1fr;gap:15px}
+  .profile-section .profile-card form>label:nth-of-type(4){grid-column:auto}
+  .profile-section .profile-card form>button[type=submit]{width:100%;justify-self:stretch}
+  .profile-section .profile-close{width:100%}
 }
 
-@media (max-width: 700px) {
-  .activity-card {
-    border-radius: 19px;
-  }
 
-  .activity-card .card-image {
-    height: 190px;
-  }
+/* Estado de participación: confirmación integrada en las tarjetas */
+.activity-card .activity-participation-message {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 9px;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 12px 19px 0;
+  padding: 9px 12px;
+  border: 1px solid #e5d8fa;
+  border-radius: 11px;
+  background: #f7f2ff;
+  color: #59318f;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-align: left;
+  box-shadow: none;
+}
 
-  .activity-card .activity-card-title {
-    margin-right: 18px !important;
-    margin-left: 18px !important;
-    font-size: 20px !important;
-  }
+.activity-card .activity-participation-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #7540bd;
+  color: #fff;
+}
 
-  .activity-card .activity-category,
-  .activity-card .activity-timeline-badge,
-  .activity-card .activity-confirmed-badge,
-  .activity-card > p,
-  .activity-card .approval-label,
-  .activity-card .activity-owner-toggle,
-  .activity-card .activity-join-button,
-  .activity-card .activity-registration-result,
+.activity-card .activity-participation-icon svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+}
+
+.registration-item .activity-participation-message {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 7px 0 0;
+  padding: 7px 10px;
+  border: 1px solid #e5d8fa;
+  border-radius: 10px;
+  background: #f7f2ff;
+  color: #59318f;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.registration-item .activity-participation-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #7540bd;
+  color: #fff;
+}
+
+.registration-item .activity-participation-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+@media (max-width: 600px) {
   .activity-card .activity-participation-message {
-    margin-left: 18px;
-    margin-right: 18px;
-  }
-
-  .activity-card .activity-details {
-    margin-right: 18px;
-    margin-left: 18px;
+    margin-right: 14px;
+    margin-left: 14px;
+    padding: 8px 10px;
+    font-size: 11.5px;
   }
 }
 
-@media (max-width: 380px) {
-  .activity-card .card-image {
-    height: 170px;
-  }
 
-  .activity-card .activity-card-title {
-    font-size: 19px !important;
-  }
+/* Compartir actividades */
+.activity-share-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: fit-content;
+  min-height: 34px;
+  margin: 4px 0 10px;
+  padding: 7px 12px;
+  border: 1px solid #e2d4f6;
+  border-radius: 999px;
+  background: #f7f2ff;
+  color: #6840a8;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+.activity-share-button:hover {
+  background: #eee4ff;
+  border-color: #cdb8ed;
+  transform: translateY(-1px);
+}
+.activity-share-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.activity-share-feedback {
+  display: inline-block;
+  margin: 0 0 8px 8px;
+  color: #6840a8;
+  font-size: 12px;
+  font-weight: 600;
+}
+.activity-detail-share-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 18px;
+}
+.activity-detail-share-button {
+  min-height: 40px;
+  padding: 9px 15px;
+  font-size: 13px;
+}
+.activity-detail-share-row .activity-share-feedback {
+  margin-bottom: 0;
 }
 
-/* CONECTÁ — TÍTULO DE ACTIVIDAD: acabado tipográfico */
-.activity-card .activity-card-title {
-  color: #35204d !important;
-  font-family: inherit;
-  font-size: 22px !important;
-  font-weight: 750 !important;
-  line-height: 1.24 !important;
-  letter-spacing: -0.55px !important;
-  text-transform: none !important;
-  text-wrap: balance;
-  margin-top: 1px !important;
-  margin-bottom: 12px !important;
+/* Centro de notificaciones: evita que el panel se corte en pantallas chicas */
+.notifications-panel {
+  box-sizing: border-box;
+  overscroll-behavior: contain;
 }
 
 @media (max-width: 700px) {
-  .activity-card .activity-card-title {
-    font-size: 21px !important;
-    line-height: 1.27 !important;
-    letter-spacing: -0.4px !important;
+  .notifications-panel {
+    position: fixed !important;
+    top: 76px !important;
+    right: 14px !important;
+    left: auto !important;
+    width: min(380px, calc(100vw - 28px)) !important;
+    max-height: calc(100vh - 90px) !important;
   }
 }

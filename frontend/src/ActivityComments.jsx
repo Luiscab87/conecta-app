@@ -27,14 +27,16 @@ function renderStars(value, size = 20) {
 
 function ActivityComments({ activity, session, registration, isOrganizer, isAdmin }) {
   const userId = session?.user?.id
-  const isCompleted = activity?.status === 'completed'
-  const endsAt = activity?.ends_at ? new Date(activity.ends_at).getTime() : 0
-  const withinWindow = Boolean(endsAt && endsAt >= Date.now() - THIRTY_DAYS_MS)
+  const now = Date.now()
+  const endsAt = activity?.ends_at ? new Date(activity.ends_at).getTime() : NaN
+  const isCancelled = activity?.status === 'cancelled'
+  const hasEnded = !isCancelled && Number.isFinite(endsAt) && now >= endsAt
+  const withinWindow = Boolean(hasEnded && now <= endsAt + THIRTY_DAYS_MS)
   const isConfirmedParticipant = registration?.status === 'confirmed'
 
-  // Organizadores y administradores pueden consultar; solo participantes confirmados pueden valorar.
-  const canRead = Boolean(isOrganizer || isAdmin || (isConfirmedParticipant && withinWindow))
-  const canRate = Boolean(userId && isCompleted && withinWindow && isConfirmedParticipant)
+  // En canceladas se conserva la lectura del historial, pero no se habilitan valoraciones.
+  const canRead = Boolean(isOrganizer || isAdmin || (isConfirmedParticipant && (isCancelled || withinWindow)))
+  const canRate = Boolean(userId && hasEnded && withinWindow && isConfirmedParticipant)
 
   const [ratings, setRatings] = useState([])
   const [myRating, setMyRating] = useState(null)
@@ -46,7 +48,7 @@ function ActivityComments({ activity, session, registration, isOrganizer, isAdmi
   const [actionMessage, setActionMessage] = useState('')
 
   const loadRatings = useCallback(async () => {
-    if (!activity?.id || !isCompleted || !canRead) {
+    if (!activity?.id || (!hasEnded && !isCancelled) || !canRead) {
       setRatings([])
       setMyRating(null)
       setLoading(false)
@@ -98,7 +100,7 @@ function ActivityComments({ activity, session, registration, isOrganizer, isAdmi
     } finally {
       setLoading(false)
     }
-  }, [activity?.id, isCompleted, canRead, userId])
+  }, [activity?.id, hasEnded, isCancelled, canRead, userId])
 
   useEffect(() => {
     loadRatings()
@@ -161,11 +163,12 @@ function ActivityComments({ activity, session, registration, isOrganizer, isAdmi
     }
   }
 
-  if (!isCompleted) return null
+  if (!hasEnded && !isCancelled) return null
 
   return (
     <section className="activity-comments" style={{ marginTop: 28, paddingTop: 22, borderTop: '1px solid var(--border, #e5e7eb)' }}>
       <h2>Opiniones y experiencias</h2>
+      {isCancelled && <p role="status">Actividad cancelada: las opiniones existentes se conservan en modo lectura.</p>}
 
       {error && <p role="alert" className="activity-detail-message">{error}</p>}
       {actionMessage && <p role="status" className="activity-detail-message">{actionMessage}</p>}

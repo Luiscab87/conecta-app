@@ -73,6 +73,7 @@ const emptyForm = {
   title: '',
   description: '',
   category: '',
+  categories: [],
   starts_at: '',
   ends_at: '',
   city: '',
@@ -101,6 +102,13 @@ const categories = [
   'Otros'
 ]
 
+function getActivityCategories(activity) {
+  if (Array.isArray(activity?.categories) && activity.categories.length > 0) {
+    return activity.categories.filter(Boolean).slice(0, 3)
+  }
+  return activity?.category ? [activity.category] : []
+}
+
 function toDateTimeLocal(value) {
   if (!value) return ''
   const date = new Date(value)
@@ -110,10 +118,18 @@ function toDateTimeLocal(value) {
     .slice(0, 16)
 }
 
+function isActivityUpcoming(activity, now = new Date()) {
+  if (!activity?.starts_at) return false
+
+  const start = new Date(activity.starts_at).getTime()
+  return Number.isFinite(start) && now.getTime() < start
+}
+
 function ActivityDetail() {
   const { activityId } = useParams()
 
   const [activity, setActivity] = useState(null)
+  const [currentTime, setCurrentTime] = useState(() => new Date())
   const [organizerName, setOrganizerName] = useState('Organizador')
   const [organizerRole, setOrganizerRole] = useState('Organiza')
   const [session, setSession] = useState(null)
@@ -123,9 +139,13 @@ function ActivityDetail() {
   const [registrationLoading, setRegistrationLoading] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [shareMessage, setShareMessage] = useState('')
 
   // Administración de participantes
   const [participants, setParticipants] = useState([])
+  const [pendingRequests, setPendingRequests] = useState([])
+  const [requestActionLoading, setRequestActionLoading] = useState(false)
+  const [requestActionMessage, setRequestActionMessage] = useState('')
   const [showParticipantsManager, setShowParticipantsManager] = useState(false)
   const [removalHistory, setRemovalHistory] = useState([])
   const [participantsLoading, setParticipantsLoading] = useState(false)
@@ -139,14 +159,55 @@ function ActivityDetail() {
     session?.user?.id === activity?.organizer_id
 
   const isCompleted = activity?.status === 'completed'
+  const isCancelled = activity?.status === 'cancelled'
+  const activityStart = activity?.starts_at ? new Date(activity.starts_at).getTime() : NaN
+  const activityEnd = activity?.ends_at ? new Date(activity.ends_at).getTime() : NaN
+  const hasActivityStarted = Number.isFinite(activityStart) && currentTime.getTime() >= activityStart
+  const hasActivityFinished = isCompleted || (Number.isFinite(activityEnd) && currentTime.getTime() >= activityEnd)
+  const registrationActionsClosed = isCancelled || hasActivityStarted || hasActivityFinished
 
-  const canManageParticipants = Boolean(isOrganizer || isAdmin)
+  const canManageParticipants = Boolean((isOrganizer || isAdmin) && !isCancelled)
+  const canRemoveParticipants = Boolean(canManageParticipants && !registrationActionsClosed)
+  const canEditActivity = Boolean(isOrganizer && !isCancelled && isActivityUpcoming(activity, currentTime))
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setCurrentTime(new Date()), 1000)
+    return () => window.clearInterval(intervalId)
+  }, [])
 
   // Edición
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState(emptyForm)
   const [editLoading, setEditLoading] = useState(false)
   const [editMessage, setEditMessage] = useState('')
+
+  async function shareCurrentActivity() {
+    if (!activity) return
+
+    const url = `${window.location.origin}/actividad/${activity.id}`
+    const shareData = {
+      title: activity.title || 'Actividad en Conectá',
+      text: `Mirá esta actividad en Conectá: ${activity.title || 'Una experiencia para compartir'}`,
+      url
+    }
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData)
+        setShareMessage('')
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url)
+        setShareMessage('Enlace copiado. ¡Ya podés compartirlo!')
+      } else {
+        window.prompt('Copiá el enlace para compartir esta actividad:', url)
+      }
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        console.error('No se pudo compartir la actividad:', error)
+        setShareMessage('No se pudo compartir el enlace.')
+      }
+    }
+  }
 
   // Sesión
   useEffect(() => {
@@ -197,6 +258,7 @@ function ActivityDetail() {
     async function loadParticipantsAndHistory() {
       if (!activity?.id || !canManageParticipants) {
         setParticipants([])
+        setPendingRequests([])
         setRemovalHistory([])
         return
       }
@@ -210,10 +272,20 @@ function ActivityDetail() {
             .from('registrations')
             .select('id, activity_id, user_id, status, created_at')
             .eq('activity_id', activity.id)
-            .eq('status', 'confirmed')
+            .in('status', ['accepted', 'confirmed'])
             .order('created_at', { ascending: true })
 
         if (registrationError) throw registrationError
+
+        const { data: pendingData, error: pendingError } =
+          await supabase
+            .from('registrations')
+            .select('id, activity_id, user_id, status, created_at')
+            .eq('activity_id', activity.id)
+            .eq('status', 'pending')
+            .order('created_at', { ascending: true })
+
+        if (pendingError) throw pendingError
 
         const { data: historyData, error: historyError } =
           await supabase
@@ -237,6 +309,7 @@ function ActivityDetail() {
         const userIds = [
           ...new Set([
             ...(registrationData || []).map(item => item.user_id),
+            ...(pendingData || []).map(item => item.user_id),
             ...(historyData || []).map(item => item.participant_id_snapshot),
             ...(historyData || []).map(item => item.removed_by_id_snapshot)
           ].filter(Boolean))
@@ -264,6 +337,13 @@ function ActivityDetail() {
 
         setParticipants(
           (registrationData || []).map(item => ({
+            ...item,
+            display_name: profileMap[item.user_id] || 'Usuario'
+          }))
+        )
+
+        setPendingRequests(
+          (pendingData || []).map(item => ({
             ...item,
             display_name: profileMap[item.user_id] || 'Usuario'
           }))
@@ -301,8 +381,54 @@ function ActivityDetail() {
     }
   }, [activity?.id, canManageParticipants])
 
+  // Aceptar o rechazar solicitudes desde el detalle de la actividad.
+  async function handleManagePendingRequest(requestId, newStatus) {
+    if (!canManageParticipants || registrationActionsClosed || !isActivityUpcoming(activity, currentTime)) {
+      setRequestActionMessage('Las solicitudes solo se pueden gestionar antes de que comience la actividad.')
+      return
+    }
+    if (requestActionLoading) return
+
+    setRequestActionLoading(true)
+    setRequestActionMessage('')
+
+    try {
+      const { error } = await supabase.rpc('manage_activity_registration', {
+        p_registration_id: requestId,
+        p_new_status: newStatus
+      })
+
+      if (error) throw error
+
+      const request = pendingRequests.find(item => item.id === requestId)
+      setPendingRequests(previous => previous.filter(item => item.id !== requestId))
+
+      if (newStatus === 'accepted' && request) {
+        setParticipants(previous => [
+          ...previous.filter(item => item.id !== request.id),
+          { ...request, status: 'confirmed' }
+        ])
+      }
+
+      setRequestActionMessage(
+        newStatus === 'accepted'
+          ? 'Solicitud aceptada. La persona ya figura entre los participantes confirmados.'
+          : 'Solicitud rechazada.'
+      )
+    } catch (err) {
+      console.error('Error gestionando solicitud desde el detalle:', err)
+      setRequestActionMessage(err.message || 'No se pudo actualizar la solicitud.')
+    } finally {
+      setRequestActionLoading(false)
+    }
+  }
+
   // Retirar un participante confirmado. El motivo es obligatorio.
   async function handleRemoveParticipant() {
+    if (!canRemoveParticipants) {
+      setRemovalMessage('No se pueden retirar participantes una vez comenzada la actividad.')
+      return
+    }
     if (!removalTarget || !removalReason.trim() || removalLoading) return
 
     if (removalReason.trim().length < 3) {
@@ -331,7 +457,7 @@ function ActivityDetail() {
           .from('registrations')
           .select('id, activity_id, user_id, status, created_at')
           .eq('activity_id', activity.id)
-          .eq('status', 'confirmed')
+          .in('status', ['accepted', 'confirmed'])
           .order('created_at', { ascending: true })
 
       if (registrationError) throw registrationError
@@ -419,6 +545,7 @@ function ActivityDetail() {
         title,
         description,
         category,
+        categories,
         starts_at,
         ends_at,
         city,
@@ -432,7 +559,8 @@ function ActivityDetail() {
         min_participants,
         registration_mode,
         signup_deadline,
-        status
+        status,
+        cancellation_reason
       `)
       .eq('id', activityId)
       .maybeSingle()
@@ -544,12 +672,19 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
     })
   }
 
-  // Abrir edición
+  // Abrir edición: sólo se permite antes del inicio de la actividad.
   function openEditActivity() {
+    if (!isOrganizer || !isActivityUpcoming(activity)) {
+      setEditing(false)
+      setEditMessage('Esta actividad ya comenzó o finalizó y no se puede editar.')
+      return
+    }
+
     setEditForm({
       title: activity.title || '',
       description: activity.description || '',
       category: activity.category || '',
+      categories: getActivityCategories(activity),
       starts_at: toDateTimeLocal(activity.starts_at),
       ends_at: toDateTimeLocal(activity.ends_at),
       city: activity.city || '',
@@ -579,6 +714,16 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
     }))
   }
 
+  function toggleEditCategory(category) {
+    setEditForm(previous => {
+      const current = getActivityCategories(previous)
+      const next = current.includes(category)
+        ? current.filter(item => item !== category)
+        : current.length < 3 ? [...current, category] : current
+      return { ...previous, categories: next, category: next[0] || '' }
+    })
+  }
+
   function updateEditMeetingPoint(point) {
     setEditForm(previous => ({
       ...previous,
@@ -593,10 +738,18 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
     event.preventDefault()
     setEditMessage('')
 
+    // Volver a comprobar al guardar para impedir cambios si la actividad
+    // comenzó mientras el formulario de edición estaba abierto.
+    if (!isOrganizer || !isActivityUpcoming(activity)) {
+      setEditing(false)
+      setEditMessage('Esta actividad ya comenzó o finalizó y no se puede editar.')
+      return
+    }
+
     if (
       !editForm.title.trim() ||
       !editForm.description.trim() ||
-      !editForm.category ||
+      !editForm.categories?.length || editForm.categories.length > 3 ||
       !editForm.starts_at ||
       !editForm.city.trim() ||
       !editForm.meeting_point.trim()
@@ -678,7 +831,8 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
         .update({
           title: editForm.title.trim(),
           description: editForm.description.trim(),
-          category: editForm.category,
+          category: editForm.categories[0],
+          categories: editForm.categories,
           starts_at: start.toISOString(),
           ends_at: end ? end.toISOString() : null,
           city: editForm.city.trim(),
@@ -714,7 +868,11 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
 
   // Solicitar participación
   async function handleJoinActivity() {
-    if (!session?.user || activity?.status === 'completed') return
+    if (!session?.user) return
+    if (registrationActionsClosed) {
+      setMessage('Las inscripciones están cerradas porque la actividad comenzó o finalizó.')
+      return
+    }
 
     setRegistrationLoading(true)
     setMessage('')
@@ -764,7 +922,11 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
       '¿Querés cancelar tu inscripción a esta actividad?'
     )
 
-    if (!confirmed || !registration || !session?.user || activity?.status === 'completed') return
+    if (!confirmed || !registration || !session?.user) return
+    if (registrationActionsClosed) {
+      setMessage('Ya no se puede cancelar la participación porque la actividad comenzó o finalizó.')
+      return
+    }
 
     setRegistrationLoading(true)
     setMessage('')
@@ -804,9 +966,35 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
             <p>{error}</p>
           ) : (
             <>
-              <span className="activity-category">
-                {activity.category}
-              </span>
+              <div className="activity-category-list" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {getActivityCategories(activity).map(category => (
+                  <span className="activity-category" key={category}>{category}</span>
+                ))}
+              </div>
+
+              {isCancelled && (
+                <div
+                  className="activity-cancellation-notice"
+                  role="status"
+                  style={{
+                    margin: '16px 0',
+                    padding: '16px',
+                    border: '1px solid #fecdca',
+                    borderRadius: '14px',
+                    background: '#fff1f0',
+                    color: '#912018'
+                  }}
+                >
+                  <strong style={{ display: 'block', marginBottom: '6px' }}>
+                    ✕ Esta actividad fue cancelada
+                  </strong>
+                  <span>
+                    {activity.cancellation_reason?.trim()
+                      ? `Motivo: ${activity.cancellation_reason}`
+                      : 'El organizador canceló esta actividad.'}
+                  </span>
+                </div>
+              )}
 
               {activity.status === 'confirmed' && (
                 <div className="activity-confirmed-badge">
@@ -816,6 +1004,22 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
               )}
 
               <h1>{activity.title}</h1>
+              <div className="activity-detail-share-row">
+                <button
+                  type="button"
+                  className="activity-share-button activity-detail-share-button"
+                  onClick={shareCurrentActivity}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <path d="m8.7 10.7 6.6-4.4M8.7 13.3l6.6 4.4" />
+                  </svg>
+                  Compartir actividad
+                </button>
+                {shareMessage && <span className="activity-share-feedback" role="status">{shareMessage}</span>}
+              </div>
 
             <div className="activity-detail-organizer">
   <div className="activity-detail-organizer-avatar">
@@ -881,20 +1085,34 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
                   {isOrganizer ? 'Administrar actividad' : 'Tu participación'}
                 </h2>
 
-                {isOrganizer ? (
+                {isCancelled ? (
+                  <div className="activity-detail-joined" role="status">
+                    <div className="activity-participation-message">
+                      <span className="activity-participation-icon">✕</span>
+                      <span>{isOrganizer ? 'Cancelaste esta actividad. Podés informar novedades en la sección correspondiente.' : 'Esta actividad fue cancelada por el organizador.'}</span>
+                    </div>
+                  </div>
+                ) : isOrganizer ? (
                   <div className="activity-detail-owner">
                     <span>⭐</span>
                     <div>
                       <strong>Sos el organizador</strong>
-                      <p>Desde acá podés modificar los datos de tu actividad.</p>
-
-                      <button
-                        type="button"
-                        className="primary activity-detail-button"
-                        onClick={openEditActivity}
-                      >
-                        Editar actividad
-                      </button>
+                      {canEditActivity ? (
+                        <>
+                          <p>Desde acá podés modificar los datos de tu actividad.</p>
+                          <button
+                            type="button"
+                            className="primary activity-detail-button"
+                            onClick={openEditActivity}
+                          >
+                            Editar actividad
+                          </button>
+                        </>
+                      ) : (
+                        <p role="status">
+                          La edición está cerrada porque la actividad ya comenzó o finalizó.
+                        </p>
+                      )}
                     </div>
                   </div>
                 ) : isCompleted ? (
@@ -908,6 +1126,13 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
                             ? 'Esta actividad ya finalizó. Tu solicitud quedó cerrada.'
                             : 'Esta actividad ya finalizó. Las inscripciones están cerradas.'}
                       </span>
+                    </div>
+                  </div>
+                ) : registrationActionsClosed ? (
+                  <div className="activity-detail-joined">
+                    <div className="activity-participation-message">
+                      <span className="activity-participation-icon">✓</span>
+                      <span>{registration?.status === 'confirmed' ? 'Tu participación sigue registrada. Las modificaciones están cerradas porque la actividad comenzó o finalizó.' : registration?.status === 'pending' ? 'Tu solicitud permanece registrada, pero ya no puede modificarse porque la actividad comenzó o finalizó.' : 'Las inscripciones están cerradas porque la actividad comenzó o finalizó.'}</span>
                     </div>
                   </div>
                 ) : !session?.user ? (
@@ -982,7 +1207,7 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
                 )}
               </section>
 
-              {canManageParticipants && (
+              {canManageParticipants && !isCancelled && (
                 <section className="activity-detail-participants-entry">
                   <button
                     type="button"
@@ -991,11 +1216,11 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
                   >
                     Administrar participantes
                   </button>
-                  <p>Consultá las personas confirmadas, gestioná retiros y revisá el historial.</p>
+                  <p>{canRemoveParticipants ? 'Consultá las personas confirmadas, gestioná retiros y revisá el historial.' : 'Podés consultar las personas confirmadas y el historial. Los retiros están cerrados porque la actividad comenzó o finalizó.'}</p>
                 </section>
               )}
 
-              {canManageParticipants && showParticipantsManager && createPortal(
+              {canManageParticipants && !isCancelled && showParticipantsManager && createPortal(
                 <div
                   className="activity-modal-overlay"
                   onClick={() => {
@@ -1055,6 +1280,52 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
                     </p>
                   )}
 
+                  <section className="activity-detail-pending-requests" style={{ marginBottom: '24px' }}>
+                    <h3>Solicitudes pendientes ({pendingRequests.length})</h3>
+                    {participantsLoading ? (
+                      <p>Cargando solicitudes...</p>
+                    ) : pendingRequests.length === 0 ? (
+                      <p>No hay solicitudes pendientes para esta actividad.</p>
+                    ) : (
+                      <div className="activity-detail-participant-list">
+                        {pendingRequests.map(request => (
+                          <article className="activity-detail-participant" key={request.id}>
+                            <div>
+                              <strong>{request.display_name}</strong>
+                              <span>Solicitó participar · {new Date(request.created_at).toLocaleDateString('es-AR')}</span>
+                            </div>
+                            {canRemoveParticipants && isActivityUpcoming(activity, currentTime) && (
+                              <div className="request-actions">
+                                <button
+                                  type="button"
+                                  className="primary request-accept"
+                                  disabled={requestActionLoading}
+                                  onClick={() => handleManagePendingRequest(request.id, 'accepted')}
+                                >
+                                  {requestActionLoading ? 'Procesando...' : 'Aceptar'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="secondary request-reject"
+                                  disabled={requestActionLoading}
+                                  onClick={() => handleManagePendingRequest(request.id, 'rejected')}
+                                >
+                                  Rechazar
+                                </button>
+                              </div>
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                    {requestActionMessage && (
+                      <p className="activity-detail-message" role="status">{requestActionMessage}</p>
+                    )}
+                    {registrationActionsClosed && pendingRequests.length > 0 && (
+                      <p className="activity-edit-locked">La actividad comenzó o finalizó. Las solicitudes pendientes se conservan, pero ya no pueden gestionarse.</p>
+                    )}
+                  </section>
+
                   <h3>Participantes confirmados ({participants.length})</h3>
                   {participantsLoading ? (
                     <p>Cargando participantes...</p>
@@ -1071,23 +1342,25 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
                             <strong>{participant.display_name}</strong>
                             <span>Confirmado</span>
                           </div>
-                          <button
-                            type="button"
-                            className="secondary"
-                            onClick={() => {
-                              setRemovalTarget(participant)
-                              setRemovalReason('')
-                              setRemovalMessage('')
-                            }}
-                          >
-                            Retirar participante
-                          </button>
+                          {canRemoveParticipants && (
+                            <button
+                              type="button"
+                              className="secondary"
+                              onClick={() => {
+                                setRemovalTarget(participant)
+                                setRemovalReason('')
+                                setRemovalMessage('')
+                              }}
+                            >
+                              Retirar participante
+                            </button>
+                          )}
                         </article>
                       ))}
                     </div>
                   )}
 
-                  {removalTarget && (
+                  {removalTarget && canRemoveParticipants && (
                     <div className="activity-detail-removal-panel">
                       <h3>Retirar a {removalTarget.display_name}</h3>
                       <p>
@@ -1156,13 +1429,15 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
                 document.body
               )}
 
-              <ActivityCommunity
-                activity={activity}
-                session={session}
-                isOrganizer={isOrganizer}
-                isAdmin={isAdmin}
-                registration={registration}
-              />
+              {!isCancelled && (
+                <ActivityCommunity
+                  activity={activity}
+                  session={session}
+                  isOrganizer={isOrganizer}
+                  isAdmin={isAdmin}
+                  registration={registration}
+                />
+              )}
 
             </>
           )}
@@ -1170,7 +1445,7 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
       </main>
 
       {/* MODAL DE EDICIÓN */}
-      {editing && createPortal(
+      {editing && isActivityUpcoming(activity) && createPortal(
         <div
           className="activity-modal-overlay"
           onClick={() => !editLoading && setEditing(false)}
@@ -1221,20 +1496,25 @@ setOrganizerRole(roleError ? 'Organiza' : organizerRole || 'Organiza')
             </label>
 
             <div className="form-grid">
-              <label>Categoría *
-                <select
-                  value={editForm.category}
-                  onChange={e => updateEditField('category', e.target.value)}
-                  required
-                >
-                  <option value="">Elegí una categoría</option>
-                  {categories.map(category => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="activity-category-selector">
+                <strong>Categorías * (elegí hasta 3)</strong>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '9px' }}>
+                  {categories.map(category => {
+                    const selected = getActivityCategories(editForm).includes(category)
+                    return (
+                      <button key={category} type="button" aria-pressed={selected}
+                        onClick={() => toggleEditCategory(category)}
+                        disabled={!selected && getActivityCategories(editForm).length >= 3}
+                        style={{ border: selected ? '1px solid #8050c6' : '1px solid #e4ddec', borderRadius: '999px', padding: '8px 12px', background: selected ? '#f1eaff' : '#fff', color: selected ? '#60349b' : '#51485c', fontSize: '13px', fontWeight: selected ? 700 : 500, cursor: 'pointer', opacity: !selected && getActivityCategories(editForm).length >= 3 ? .45 : 1 }}>
+                        {selected ? '✓ ' : ''}{category}
+                      </button>
+                    )
+                  })}
+                </div>
+                <small style={{ display: 'block', marginTop: '7px', color: '#786d83' }}>
+                  {getActivityCategories(editForm).length}/3 seleccionadas
+                </small>
+              </div>
 
               <label>Ciudad *
                 <input

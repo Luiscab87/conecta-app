@@ -23,23 +23,29 @@ function ActivityCommunity({
   const [notice, setNotice] = useState('')
   const [activeTab, setActiveTab] = useState('news')
 
+  const now = Date.now()
   const activityEndedAt = activity?.ends_at ? new Date(activity.ends_at).getTime() : NaN
+  const activityStartsAt = activity?.starts_at ? new Date(activity.starts_at).getTime() : NaN
+  const isCancelled = activity?.status === 'cancelled'
+
+  // Las etapas se determinan por fechas; el cron solo sincroniza el estado en Supabase.
+  const hasStarted = Number.isFinite(activityStartsAt) && now >= activityStartsAt
+  const hasEnded = !isCancelled && Number.isFinite(activityEndedAt) && now >= activityEndedAt
   const withinPostActivityWindow =
     Number.isFinite(activityEndedAt) &&
-    Date.now() <= activityEndedAt + 30 * 24 * 60 * 60 * 1000
-
-  const activityStartsAt = activity?.starts_at ? new Date(activity.starts_at).getTime() : NaN
-  const hasStarted = activity?.status === 'completed' || (Number.isFinite(activityStartsAt) && Date.now() >= activityStartsAt)
+    now <= activityEndedAt + 30 * 24 * 60 * 60 * 1000
 
   const isConfirmedParticipant = ['accepted', 'confirmed'].includes(registration?.status)
+  const participantHistoryAvailable = !hasEnded || withinPostActivityWindow
   const canParticipate =
-    isOrganizer || (isConfirmedParticipant && (activity?.status !== 'completed' || withinPostActivityWindow))
-
-  const participantHistoryAvailable = activity?.status !== 'completed' || withinPostActivityWindow
+    isOrganizer || (isConfirmedParticipant && participantHistoryAvailable)
   const canReadPosts = isOrganizer || isAdmin || (isConfirmedParticipant && participantHistoryAvailable)
   const canReadMessages = isOrganizer || isAdmin || (isConfirmedParticipant && participantHistoryAvailable)
-  const canPublish = !hasStarted && ((isAdmin && !isOrganizer) || (isOrganizer && participantHistoryAvailable))
-  const canSendMessages = !hasStarted && canParticipate && participantHistoryAvailable
+  // En una actividad cancelada, solo el organizador puede publicar novedades.
+  const canPublish = isCancelled
+    ? Boolean(isOrganizer)
+    : !hasStarted && ((isAdmin && !isOrganizer) || (isOrganizer && participantHistoryAvailable))
+  const canSendMessages = !isCancelled && !hasStarted && canParticipate && participantHistoryAvailable
 
   const loadCommunity = useCallback(async () => {
     if (!activity?.id || !canReadPosts) {
@@ -349,7 +355,7 @@ function ActivityCommunity({
 
         <p>{message.body}</p>
 
-        <button
+        {!isCancelled && <button
           type="button"
           className="activity-community-reply-button"
           onClick={() => {
@@ -358,9 +364,9 @@ function ActivityCommunity({
           }}
         >
           Responder
-        </button>
+        </button>}
 
-        {replyingTo === message.id && (
+        {!isCancelled && replyingTo === message.id && (
           <form
             className="activity-community-reply-form"
             onSubmit={event => sendMessage(event, message.id)}
@@ -407,7 +413,7 @@ function ActivityCommunity({
   }
 
   if (!canReadPosts) {
-    return activity?.status === 'completed' ? (
+    return !participantHistoryAvailable ? (
       <section className="activity-community activity-community-closed">
         <p className="activity-community-empty">El período de acceso a la comunidad finalizó. Podés seguir consultando los datos básicos de esta actividad desde tu historial.</p>
       </section>
@@ -415,11 +421,13 @@ function ActivityCommunity({
   }
 
   const tabButtonStyle = (selected, disabled = false) => ({
-    flex: 1,
+    width: '100%',
     minWidth: 0,
+    minHeight: 88,
+    boxSizing: 'border-box',
     border: selected ? '1px solid var(--primary, #8050b8)' : '1px solid var(--border, #e5e7eb)',
     borderRadius: 12,
-    padding: '12px 8px',
+    padding: '9px 3px',
     background: selected ? 'var(--surface-secondary, #f2ecfa)' : 'var(--surface, #fff)',
     color: disabled ? 'var(--muted, #8992a3)' : 'var(--text, inherit)',
     opacity: disabled ? 0.62 : 1,
@@ -428,14 +436,41 @@ function ActivityCommunity({
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 4
+    justifyContent: 'center',
+    gap: 6,
+    overflow: 'hidden'
   })
 
-  const isCompleted = activity?.status === 'completed'
+  // Los tres títulos permanecen en una sola línea incluso en pantallas angostas.
+  const tabLabelStyle = {
+    display: 'block',
+    width: '100%',
+    minWidth: 0,
+    textAlign: 'center',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    lineHeight: 1.2,
+    fontSize: 'clamp(10px, 2.8vw, 15px)'
+  }
+
+  const tabAvailabilityStyle = {
+    display: 'block',
+    width: '100%',
+    minWidth: 0,
+    textAlign: 'center',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    lineHeight: 1.2,
+    fontSize: 'clamp(9px, 2.2vw, 11px)',
+    fontWeight: 500
+  }
+
+  const isCompleted = hasEnded
   const tabAvailability = {
-    news: hasStarted ? 'Solo lectura' : 'Disponible',
-    questions: hasStarted ? 'Solo lectura' : 'Disponible',
-    experiences: isCompleted ? 'Disponible' : 'Se habilita al finalizar'
+    news: isCancelled ? (isOrganizer ? 'Puede publicar' : 'Solo lectura') : hasStarted ? 'Solo lectura' : 'Disponible',
+    questions: isCancelled || hasStarted ? 'Solo lectura' : 'Disponible',
+    experiences: isCancelled ? 'Solo lectura' : isCompleted ? 'Disponible' : 'Se habilita al finalizar'
   }
 
   return (
@@ -443,35 +478,73 @@ function ActivityCommunity({
       <div className="activity-community-heading">
         <span className="tag">ESPACIO DE LA ACTIVIDAD</span>
         <h2>La experiencia continúa acá</h2>
-        <p>Novedades, consultas y experiencias en un mismo lugar.</p>
+        <p>{isCancelled ? 'Actividad cancelada. Las novedades pueden ser publicadas por el organizador; el resto del contenido queda en modo lectura.' : 'Novedades, consultas y experiencias en un mismo lugar.'}</p>
       </div>
 
       {error && <p className="activity-community-feedback error" role="alert">{error}</p>}
       {notice && <p className="activity-community-feedback success" role="status">{notice}</p>}
 
-      <div role="tablist" aria-label="Secciones de la actividad" style={{ display: 'flex', gap: 8, margin: '18px 0', width: '100%' }}>
-        <button type="button" role="tab" aria-selected={activeTab === 'news'} onClick={() => setActiveTab('news')} style={tabButtonStyle(activeTab === 'news')}>
-          <span>📢</span><span>Novedades</span><small>{tabAvailability.news}</small>
+      <div
+        role="tablist"
+        aria-label="Secciones de la actividad"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+          gap: 8,
+          margin: '18px 0',
+          width: '100%',
+          minWidth: 0
+        }}
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'news'}
+          onClick={() => setActiveTab('news')}
+          style={tabButtonStyle(activeTab === 'news')}
+        >
+          <span aria-hidden="true">📢</span>
+          <span style={tabLabelStyle}>Novedades</span>
+          <small style={tabAvailabilityStyle}>{tabAvailability.news}</small>
         </button>
-        <button type="button" role="tab" aria-selected={activeTab === 'questions'} onClick={() => setActiveTab('questions')} style={tabButtonStyle(activeTab === 'questions')}>
-          <span>💬</span><span>Preguntas</span><small>{tabAvailability.questions}</small>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'questions'}
+          onClick={() => setActiveTab('questions')}
+          style={tabButtonStyle(activeTab === 'questions')}
+        >
+          <span aria-hidden="true">💬</span>
+          <span style={tabLabelStyle}>Preguntas</span>
+          <small style={tabAvailabilityStyle}>{tabAvailability.questions}</small>
         </button>
-        <button type="button" role="tab" aria-selected={activeTab === 'experiences'} onClick={() => setActiveTab('experiences')} style={tabButtonStyle(activeTab === 'experiences', !isCompleted)}>
-          <span>⭐</span><span>Experiencias</span><small>{tabAvailability.experiences}</small>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'experiences'}
+          onClick={() => setActiveTab('experiences')}
+          style={tabButtonStyle(activeTab === 'experiences', !isCompleted)}
+        >
+          <span aria-hidden="true">⭐</span>
+          <span style={tabLabelStyle}>Experiencias</span>
+          <small style={tabAvailabilityStyle}>{tabAvailability.experiences}</small>
         </button>
       </div>
 
       {activeTab === 'news' && (
         <section className="activity-community-posts" role="tabpanel">
           <div className="activity-community-section-title"><h3>Novedades</h3></div>
-          {!hasStarted && canPublish && (
+          {canPublish && (
             <form className="activity-community-post-form" onSubmit={publishPost}>
               <label htmlFor="activity-post-text">{isAdmin && !isOrganizer ? 'Publicar un aviso de la administración' : 'Compartí una novedad con los participantes'}</label>
               <textarea id="activity-post-text" value={postText} onChange={event => setPostText(event.target.value)} placeholder={isAdmin && !isOrganizer ? 'Escribí un aviso oficial...' : 'Escribí una novedad o información importante...'} rows={3} maxLength={2000} required />
               <button type="submit" className="primary" disabled={sending || !postText.trim()}>{sending ? 'Publicando...' : isAdmin && !isOrganizer ? 'Publicar aviso administrativo' : 'Publicar novedad'}</button>
             </form>
           )}
-          {hasStarted && <p className="activity-community-empty">La actividad comenzó. Las novedades están disponibles en modo lectura.</p>}
+          {isCancelled && !isOrganizer && <p className="activity-community-empty">La actividad fue cancelada. Las novedades están disponibles en modo lectura.</p>}
+          {!isCancelled && hasStarted && <p className="activity-community-empty">La actividad comenzó. Las novedades están disponibles en modo lectura.</p>}
           {loading ? <p>Cargando publicaciones...</p> : posts.length === 0 ? <p className="activity-community-empty">Todavía no hay publicaciones.</p> : (
             <div className="activity-community-post-list">
               {posts.map(post => {
@@ -495,7 +568,7 @@ function ActivityCommunity({
           {canSendMessages ? <form className="activity-community-comment-form" onSubmit={event => sendMessage(event)}>
             <textarea value={commentText} onChange={event => setCommentText(event.target.value)} placeholder="¿Tenés alguna consulta sobre la actividad?" rows={3} maxLength={2000} required />
             <button type="submit" className="primary" disabled={sending || !commentText.trim()}>{sending ? 'Enviando...' : 'Enviar pregunta'}</button>
-          </form> : <p className="activity-community-empty">La actividad comenzó. Las preguntas y respuestas están disponibles en modo lectura.</p>}
+          </form> : <p className="activity-community-empty">{isCancelled ? 'La actividad fue cancelada. Las preguntas y respuestas anteriores permanecen disponibles en modo lectura.' : 'La actividad comenzó. Las preguntas y respuestas están disponibles en modo lectura.'}</p>}
           {loading ? <p>Cargando preguntas...</p> : mainMessages.length === 0 ? <p className="activity-community-empty">Todavía no hay preguntas. ¡Podés iniciar la conversación!</p> : <div className="activity-community-message-list">{mainMessages.map(message => renderMessage(message, 0))}</div>}
           <button type="button" className="activity-community-refresh" onClick={loadCommunity} disabled={loading}>Actualizar preguntas</button>
         </section>
@@ -504,7 +577,7 @@ function ActivityCommunity({
       {activeTab === 'questions' && !canReadMessages && <p className="activity-community-empty">Las preguntas están disponibles para el organizador y los participantes confirmados.</p>}
 
       {activeTab === 'experiences' && (
-        isCompleted ? <ActivityComments activity={activity} session={session} registration={registration} isOrganizer={isOrganizer} isAdmin={isAdmin} /> :
+        (isCompleted || isCancelled) ? <ActivityComments activity={activity} session={session} registration={registration} isOrganizer={isOrganizer} isAdmin={isAdmin} /> :
         <section className="activity-community-locked" role="tabpanel" style={{ padding: 20, border: '1px solid var(--border, #e5e7eb)', borderRadius: 14, textAlign: 'center' }}>
           <div style={{ fontSize: 28 }}>⭐</div><strong>Opiniones y experiencias</strong>
           <p>Esta sección se habilitará cuando la actividad esté finalizada. Allí podrás valorar la experiencia, dejar un comentario y compartir fotografías.</p>

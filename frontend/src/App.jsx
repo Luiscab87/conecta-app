@@ -1,5 +1,8 @@
 
 import { useEffect, useState } from 'react'
+import { Capacitor } from '@capacitor/core'
+import { App as CapacitorApp } from '@capacitor/app'
+import { FirebaseMessaging } from '@capacitor-firebase/messaging'
 import { Link, useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { supabase } from './lib/supabase'
@@ -67,6 +70,36 @@ function getActivityTimelineStatus(activity, now = new Date()) {
   return 'finished'
 }
 
+function PasswordEyeIcon({ visible }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {visible ? (
+        <>
+          <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" />
+          <circle cx="12" cy="12" r="3" />
+        </>
+      ) : (
+        <>
+          <path d="M3 3l18 18" />
+          <path d="M10.6 5.1A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a15.8 15.8 0 0 1-3.1 3.9" />
+          <path d="M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7c1.4 0 2.7-.3 3.8-.8" />
+        </>
+      )}
+    </svg>
+  )
+}
+
 function App() {
   const navigate = useNavigate()
   const [activities, setActivities] = useState([])
@@ -83,6 +116,8 @@ function App() {
   const [customStartDate, setCustomStartDate] = useState('')
   const [customEndDate, setCustomEndDate] = useState('')
   const [myRegistrations, setMyRegistrations] = useState([])
+  const [myActivitiesTab, setMyActivitiesTab] = useState('upcoming')
+  const [cancelledMyActivities, setCancelledMyActivities] = useState([])
   const [receivedRegistrations, setReceivedRegistrations] = useState([])
   const [registrationProfiles, setRegistrationProfiles] = useState({})
   const [registrationMessage, setRegistrationMessage] = useState('')
@@ -97,12 +132,15 @@ function App() {
   const [editActivityForm, setEditActivityForm] = useState(emptyActivity)
   const [adminMessage, setAdminMessage] = useState('')
   const [adminLoading, setAdminLoading] = useState(false)
+  const [cancellationTarget, setCancellationTarget] = useState(null)
+  const [cancellationReason, setCancellationReason] = useState('')
 
   const [loading, setLoading] = useState(false)
   const [profileLoading, setProfileLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [profileMessage, setProfileMessage] = useState('')
   const [activityMessage, setActivityMessage] = useState('')
+  const [shareFeedbackActivityId, setShareFeedbackActivityId] = useState(null)
 
   // Actualizar la hora periódicamente para que la línea temporal avance sola.
   useEffect(() => {
@@ -124,6 +162,11 @@ function App() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  // Mostrar u ocultar contraseñas
+const [showPassword, setShowPassword] = useState(false)
+const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+const [showNewPassword, setShowNewPassword] = useState(false)
+const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false)
 
   // Perfil
   const [profileName, setProfileName] = useState('')
@@ -143,11 +186,92 @@ function App() {
   // Nueva actividad
   const [activityForm, setActivityForm] = useState(emptyActivity)
 
+
+  // Flecha atrás nativa de Android: primero cierra la interfaz abierta;
+  // si no hay nada abierto, vuelve a la sección anterior o sale desde Inicio.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+
+    let listener
+    let disposed = false
+
+    CapacitorApp.addListener('backButton', () => {
+      if (showAuth) {
+        setShowAuth(false)
+        return
+      }
+
+      if (showNotifications) {
+        setShowNotifications(false)
+        return
+      }
+
+      if (showCreateActivity) {
+        setShowCreateActivity(false)
+        return
+      }
+
+      if (cancellationTarget) {
+        setCancellationTarget(null)
+        setCancellationReason('')
+        return
+      }
+
+      if (showProfile || activeSection === 'profile') {
+        setShowProfile(false)
+        setActiveSection('home')
+        return
+      }
+
+      if (expandedActivityId) {
+        setExpandedActivityId(null)
+        return
+      }
+
+      if (activeSection !== 'home') {
+        setActiveSection('home')
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        return
+      }
+
+      const historyIndex = window.history.state?.idx ?? 0
+      if (historyIndex > 0) {
+        navigate(-1)
+      } else {
+        CapacitorApp.exitApp()
+      }
+    }).then(handle => {
+      if (disposed) {
+        handle.remove()
+      } else {
+        listener = handle
+      }
+    }).catch(error => {
+      console.error('No se pudo registrar la navegación atrás de Android:', error)
+    })
+
+    return () => {
+      disposed = true
+      listener?.remove()
+    }
+  }, [
+    navigate,
+    showAuth,
+    showNotifications,
+    showCreateActivity,
+    cancellationTarget,
+    showProfile,
+    activeSection,
+    expandedActivityId
+  ])
+
+
   // Cargar notificaciones del usuario
   async function loadNotifications(currentSession = session) {
     if (!currentSession?.user) {
       setNotifications([])
       setNotificationProfiles({})
+      setNotificationsLoading(false)
       return
     }
 
@@ -228,6 +352,34 @@ function App() {
     if (notification.activity_id) {
       navigate(`/actividad/${notification.activity_id}`)
     }
+  }
+
+  // Eliminar una notificación únicamente del centro del usuario que la recibe
+  async function deleteNotification(notificationId) {
+    if (!session?.user?.id) return
+
+    const { data: deletedRows, error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('id', notificationId)
+      .eq('recipient_id', session.user.id)
+      .select('id')
+
+    if (error) {
+      console.error('Error eliminando notificación:', error.message)
+      setNotificationError('No se pudo eliminar la notificación. Revisá los permisos de eliminación.')
+      return
+    }
+
+    // Supabase puede devolver cero filas si RLS no permite DELETE.
+    // No la quitamos visualmente si no se confirmó la eliminación real.
+    if (!deletedRows || deletedRows.length === 0) {
+      setNotificationError('La notificación no se eliminó en la base de datos. Hay que habilitar el permiso DELETE para tus propias notificaciones en Supabase.')
+      return
+    }
+
+    setNotifications(previous => previous.filter(item => item.id !== notificationId))
+    setNotificationError('')
   }
 
   async function markAllNotificationsAsRead() {
@@ -342,6 +494,7 @@ useEffect(() => {
   async function loadRegistrations(currentSession = session, currentActivities = activities) {
     if (!currentSession?.user) {
       setMyRegistrations([])
+      setCancelledMyActivities([])
       setReceivedRegistrations([])
       setRegistrationProfiles({})
       return
@@ -384,27 +537,27 @@ useEffect(() => {
     setMyRegistrations(mine || [])
     setReceivedRegistrations(received)
 
-    const participantIds = [...new Set(received.map(item => item.user_id))]
-    if (participantIds.length > 0) {
-      const { data: profiles, error: profilesError } = await supabase
-        .from('profiles')
-        .select('id, display_name, city, avatar_url')
-        .in('id', participantIds)
+    // Cargar únicamente las actividades canceladas vinculadas a mis inscripciones.
+    const myActivityIds = [...new Set((mine || []).map(item => item.activity_id).filter(Boolean))]
 
-      if (profilesError) {
-        console.warn('No se pudieron cargar los perfiles de participantes:', profilesError.message)
-        setRegistrationProfiles({})
+    if (myActivityIds.length > 0) {
+      const { data: cancelled, error: cancelledError } = await supabase
+        .from('activities')
+        .select('id, title, starts_at, ends_at, status')
+        .in('id', myActivityIds)
+        .eq('status', 'cancelled')
+
+      if (cancelledError) {
+        console.error('Error cargando actividades canceladas:', cancelledError.message)
+        setCancelledMyActivities([])
       } else {
-        const profileMap = {}
-        ;(profiles || []).forEach(profile => {
-          profileMap[profile.id] = profile
-        })
-        setRegistrationProfiles(profileMap)
+        setCancelledMyActivities(cancelled || [])
       }
     } else {
-      setRegistrationProfiles({})
+      setCancelledMyActivities([])
     }
   }
+
 
   async function handleJoinActivity(activity) {
     if (!session?.user) {
@@ -487,6 +640,11 @@ useEffect(() => {
   }
 
   function startEditingActivity(activity) {
+    if (getActivityTimelineStatus(activity, currentTime) !== 'upcoming') {
+      setAdminMessage('Esta actividad ya comenzó y no se puede editar.')
+      return
+    }
+
     setEditActivityForm({
       title: activity.title || '',
       description: activity.description || '',
@@ -517,6 +675,11 @@ useEffect(() => {
     console.log('[Conectá] Entró a saveEditedActivity', { activityId: activity?.id, title: activity?.title })
     event.preventDefault()
     setAdminMessage('')
+    if (!activity || getActivityTimelineStatus(activity, new Date()) !== 'upcoming') {
+      setEditingActivityId(null)
+      setAdminMessage('Esta actividad ya comenzó y no se puede editar.')
+      return
+    }
     if (!editActivityForm.title.trim() || !editActivityForm.description.trim() ||
         !editActivityForm.category || !editActivityForm.starts_at ||
         !editActivityForm.ends_at ||
@@ -670,22 +833,45 @@ useEffect(() => {
     }
   }
 
-  async function deleteActivity(activity) {
-    const confirmed = window.confirm(`¿Seguro que querés eliminar “${activity.title}”? Esta acción no se puede deshacer.`)
-    if (!confirmed) return
+  function openCancellationDialog(activity) {
+    setCancellationTarget(activity)
+    setCancellationReason('')
+    setAdminMessage('')
+  }
+
+  async function handleCancelActivity() {
+    if (!cancellationTarget || adminLoading) return
+
+    const reason = cancellationReason.trim()
+    if (reason.length > 1000) {
+      setAdminMessage('El motivo no puede superar los 1000 caracteres.')
+      return
+    }
+
     setAdminLoading(true)
     setAdminMessage('')
     try {
-      const { error } = await supabase.from('activities')
-        .delete().eq('id', activity.id).eq('organizer_id', session.user.id)
+      const { data, error } = await supabase.rpc('cancel_activity', {
+        p_activity_id: cancellationTarget.id,
+        p_reason: reason || null
+      })
       if (error) throw error
-      setActivities(previous => previous.filter(item => item.id !== activity.id))
-      setReceivedRegistrations(previous => previous.filter(item => item.activity_id !== activity.id))
+      if (data?.success === false) {
+        throw new Error(data.message || 'La actividad no pudo cancelarse.')
+      }
+
+      const activityId = cancellationTarget.id
+      setActivities(previous => previous.filter(item => item.id !== activityId))
+      setReceivedRegistrations(previous => previous.filter(item => item.activity_id !== activityId))
       setExpandedActivityId(null)
       setEditingActivityId(null)
-      setAdminMessage('Actividad eliminada.')
+      setCancellationTarget(null)
+      setCancellationReason('')
+      await loadActivities()
+      await loadRegistrations(session)
+      setAdminMessage('La actividad se canceló correctamente. Se notificó a las personas confirmadas.')
     } catch (error) {
-      setAdminMessage('No se pudo eliminar: ' + error.message)
+      setAdminMessage('No se pudo cancelar la actividad: ' + (error.message || 'Error desconocido.'))
     } finally {
       setAdminLoading(false)
     }
@@ -736,6 +922,7 @@ function registrationStatusLabel(status) {
       loadRegistrations(session, activities)
     } else {
       setMyRegistrations([])
+      setCancelledMyActivities([])
       setReceivedRegistrations([])
       setRegistrationProfiles({})
     }
@@ -942,19 +1129,94 @@ if (preferencesError) {
     }
   }
 
-  // Cerrar sesión
-  async function handleLogout() {
-    const { error } = await supabase.auth.signOut()
+ 
+// Cerrar sesión
+async function handleLogout() {
+  // La limpieza de notificaciones es secundaria: nunca debe impedir
+  // que Supabase cierre la sesión, especialmente en Android.
+  let user = session?.user || null
 
-    if (error) {
-      setMessage(error.message)
-    } else {
-      setMessage('Cerraste sesión correctamente.')
-      setShowProfile(false)
-      setShowCreateActivity(false)
-      setRecoveryMode(false)
+  try {
+    const { data, error: userError } = await supabase.auth.getUser()
+
+    if (userError) {
+      console.warn('No se pudo consultar el usuario antes de cerrar sesión:', userError.message)
+    } else if (data?.user) {
+      user = data.user
+    }
+  } catch (error) {
+    console.warn('No se pudo identificar el usuario antes de cerrar sesión:', error)
+  }
+
+  // Android: intentar desvincular el token FCM sin bloquear el logout.
+  if (
+    user &&
+    Capacitor.isNativePlatform() &&
+    Capacitor.getPlatform() === 'android'
+  ) {
+    try {
+      const { token } = await FirebaseMessaging.getToken()
+
+      if (token) {
+        const { error: deleteAndroidError } = await supabase
+          .from('android_push_tokens')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('fcm_token', token)
+
+        if (deleteAndroidError) {
+          console.warn('No se pudo desvincular el token Android:', deleteAndroidError.message)
+        }
+      }
+    } catch (error) {
+      console.warn('No se pudo limpiar el token Android antes del logout:', error)
     }
   }
+
+  // Navegador: intentar desvincular la suscripción Web Push.
+  // En la APK puede no existir serviceWorker; eso no debe bloquear el cierre.
+  if (user && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.getRegistration()
+
+      if (registration) {
+        const subscription = await registration.pushManager.getSubscription()
+
+        if (subscription) {
+          const { error: deleteError } = await supabase
+            .from('push_subscriptions')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('endpoint', subscription.endpoint)
+
+          if (deleteError) {
+            console.warn('No se pudo desvincular la suscripción Web Push:', deleteError.message)
+          } else {
+            await subscription.unsubscribe()
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('No se pudo limpiar la suscripción Web Push antes del logout:', error)
+    }
+  }
+
+  // El cierre de sesión se ejecuta aunque haya fallado alguna limpieza.
+  try {
+    const { error } = await supabase.auth.signOut()
+
+    if (error) throw error
+
+    setMessage('Cerraste sesión correctamente.')
+    setShowProfile(false)
+    setShowCreateActivity(false)
+    setShowNotifications(false)
+    setRecoveryMode(false)
+  } catch (error) {
+    console.error('Error al cerrar sesión:', error)
+    setMessage(error.message || 'No pudimos cerrar la sesión correctamente.')
+  }
+}
 
   // Abrir formulario de creación
   function openActivityForm() {
@@ -1235,6 +1497,31 @@ async function saveProfile(event) {
     })
   }
 
+  async function shareActivity(activity) {
+    const url = `${window.location.origin}/actividad/${activity.id}`
+    const shareData = {
+      title: activity.title || 'Actividad en Conectá',
+      text: `Mirá esta actividad en Conectá: ${activity.title || 'Una experiencia para compartir'}`,
+      url
+    }
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData)
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url)
+        setShareFeedbackActivityId(activity.id)
+      } else {
+        window.prompt('Copiá el enlace para compartir esta actividad:', url)
+      }
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        console.error('No se pudo compartir la actividad:', error)
+        setShareFeedbackActivityId(`error-${activity.id}`)
+      }
+    }
+  }
+
   const editingActivity = activities.find(item => item.id === editingActivityId)
   useEffect(() => {
     if (!editingActivityId) return
@@ -1367,6 +1654,41 @@ async function saveProfile(event) {
   }
   const visibleActivities = visibleActivitiesByTab[selectedActivityTab] || upcomingActivities
 
+  // Separar Mis actividades por estado de la actividad, no por el estado de la inscripción.
+  const activeMyRegistrations = myRegistrations.filter(
+    registration => ['pending', 'accepted', 'confirmed'].includes(registration.status)
+  )
+
+  const myUpcomingActivities = activeMyRegistrations
+    .map(registration => ({
+      registration,
+      activity: activities.find(item => item.id === registration.activity_id)
+    }))
+    .filter(item => item.activity && new Date(item.activity.ends_at).getTime() >= currentTime.getTime())
+    .sort((a, b) => new Date(a.activity.starts_at) - new Date(b.activity.starts_at))
+
+  const myFinishedActivities = activeMyRegistrations
+    .map(registration => ({
+      registration,
+      activity: activities.find(item => item.id === registration.activity_id)
+    }))
+    .filter(item => item.activity && new Date(item.activity.ends_at).getTime() < currentTime.getTime())
+    .sort((a, b) => new Date(b.activity.ends_at) - new Date(a.activity.ends_at))
+
+  const myCancelledActivities = cancelledMyActivities
+    .map(activity => ({
+      activity,
+      registration: myRegistrations.find(item => item.activity_id === activity.id)
+    }))
+    .sort((a, b) => new Date(b.activity.starts_at) - new Date(a.activity.starts_at))
+
+  const myActivitiesByTab = {
+    upcoming: myUpcomingActivities,
+    finished: myFinishedActivities,
+    cancelled: myCancelledActivities
+  }
+  const visibleMyActivities = myActivitiesByTab[myActivitiesTab] || myUpcomingActivities
+
   const activeFilterCount =
     selectedCategories.length +
     (selectedCity ? 1 : 0) +
@@ -1454,14 +1776,15 @@ async function saveProfile(event) {
 
             {showNotifications && (
               <div
+                className="notifications-panel"
                 role="dialog"
                 aria-label="Centro de notificaciones"
                 style={{
                   position: 'absolute',
                   top: '54px',
-                  right: '-110px',
+                  right: '0',
                   width: 'min(380px, calc(100vw - 28px))',
-                  maxHeight: ' min(520px, calc(100vh - 110px))',
+                  maxHeight: 'min(520px, calc(100vh - 110px))',
                   overflowY: 'auto',
                   background: '#ffffff',
                   border: '1px solid #eee8f5',
@@ -1533,54 +1856,88 @@ async function saveProfile(event) {
                       })
 
                       return (
-                        <button
+                        <div
                           key={notification.id}
-                          type="button"
-                          onClick={() => handleNotificationClick(notification)}
                           style={{
-                            width: '100%',
                             display: 'flex',
-                            gap: '12px',
-                            alignItems: 'flex-start',
-                            textAlign: 'left',
-                            padding: '14px 16px',
-                            border: 0,
+                            alignItems: 'stretch',
                             borderBottom: '1px solid #f3eff7',
-                            background: notification.read_at ? '#ffffff' : '#faf7ff',
-                            cursor: 'pointer',
-                            color: '#30283a'
+                            background: notification.read_at ? '#ffffff' : '#faf7ff'
                           }}
                         >
-                          <span style={{
-                            flex: '0 0 36px',
-                            width: '36px',
-                            height: '36px',
-                            borderRadius: '50%',
-                            background: '#eee6fb',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: '#7041b8',
-                            fontSize: '16px',
-                            fontWeight: 700
-                          }}>
-                            {actorName.charAt(0).toUpperCase()}
-                          </span>
-                          <span style={{ minWidth: 0, flex: 1 }}>
-                            <span style={{ display: 'block', fontSize: '13px', fontWeight: notification.read_at ? 500 : 700, lineHeight: 1.35 }}>
-                              {notification.title}
+                          <button
+                            type="button"
+                            onClick={() => handleNotificationClick(notification)}
+                            style={{
+                              minWidth: 0,
+                              flex: 1,
+                              display: 'flex',
+                              gap: '12px',
+                              alignItems: 'flex-start',
+                              textAlign: 'left',
+                              padding: '14px 10px 14px 16px',
+                              border: 0,
+                              background: 'transparent',
+                              cursor: 'pointer',
+                              color: '#30283a'
+                            }}
+                          >
+                            <span style={{
+                              flex: '0 0 36px',
+                              width: '36px',
+                              height: '36px',
+                              borderRadius: '50%',
+                              background: '#eee6fb',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: '#7041b8',
+                              fontSize: '16px',
+                              fontWeight: 700
+                            }}>
+                              {actorName.charAt(0).toUpperCase()}
                             </span>
-                            <span style={{ display: 'block', color: '#6f6679', fontSize: '12px', lineHeight: 1.4, marginTop: '4px' }}>
-                              {actorName}: {notification.body}
+                            <span style={{ minWidth: 0, flex: 1 }}>
+                              <span style={{ display: 'block', fontSize: '13px', fontWeight: notification.read_at ? 500 : 700, lineHeight: 1.35 }}>
+                                {notification.title}
+                              </span>
+                              <span style={{ display: 'block', color: '#6f6679', fontSize: '12px', lineHeight: 1.4, marginTop: '4px' }}>
+                                {actorName}: {notification.body}
+                              </span>
+                              <span style={{ display: 'block', color: '#9a91a3', fontSize: '11px', marginTop: '6px' }}>
+                                {dateLabel}
+                              </span>
                             </span>
-                            <span style={{ display: 'block', color: '#9a91a3', fontSize: '11px', marginTop: '6px' }}>
-                              {dateLabel}
-                            </span>
-                          </span>
-                          {!notification.read_at && (
-                            <span aria-label="No leída" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#8b5bd1', marginTop: '5px', flex: '0 0 8px' }} />
-                          )}
-                        </button>
+                            {!notification.read_at && (
+                              <span aria-label="No leída" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#8b5bd1', marginTop: '5px', flex: '0 0 8px' }} />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Eliminar notificación: ${notification.title}`}
+                            title="Eliminar notificación"
+                            onClick={() => deleteNotification(notification.id)}
+                            style={{
+                              flex: '0 0 36px',
+                              alignSelf: 'flex-start',
+                              width: '32px',
+                              height: '32px',
+                              margin: '12px 10px 0 0',
+                              border: 0,
+                              borderRadius: '10px',
+                              background: 'transparent',
+                              color: '#9a91a3',
+                              cursor: 'pointer',
+                              fontSize: '19px',
+                              lineHeight: 1,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
                       )
                     })}
                   </div>
@@ -1640,45 +1997,124 @@ async function saveProfile(event) {
                 <h2>Mis actividades</h2>
                 <p>Consultá tus inscripciones y el estado de cada experiencia.</p>
               </div>
-              {myRegistrations.length === 0 ? (
-                <p className="registration-empty">Todavía no te inscribiste a ninguna actividad.</p>
+
+              <div
+                className="activity-timeline-tabs"
+                role="tablist"
+                aria-label="Mis actividades por estado"
+                style={{
+                  display: 'flex',
+                  alignItems: 'stretch',
+                  justifyContent: 'flex-start',
+                  gap: 'clamp(20px, 4vw, 42px)',
+                  width: '100%',
+                  margin: '0 auto 24px',
+                  padding: '0 4px',
+                  borderBottom: '1px solid #eeeaf2',
+                  overflowX: 'auto'
+                }}
+              >
+                {[
+                  { id: 'upcoming', title: 'Próximas', count: myUpcomingActivities.length },
+                  { id: 'finished', title: 'Finalizadas', count: myFinishedActivities.length },
+                  { id: 'cancelled', title: 'Canceladas', count: myCancelledActivities.length }
+                ].map(tab => {
+                  const isActive = myActivitiesTab === tab.id
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      onClick={() => setMyActivitiesTab(tab.id)}
+                      style={{
+                        flex: '0 0 auto',
+                        minHeight: '44px',
+                        padding: '8px 3px 10px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '7px',
+                        border: 0,
+                        borderBottom: isActive ? '3px solid #7650c8' : '3px solid transparent',
+                        borderRadius: 0,
+                        marginBottom: '-1px',
+                        background: 'transparent',
+                        color: isActive ? '#7650c8' : '#77717f',
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        fontSize: '14px',
+                        fontWeight: isActive ? 700 : 600,
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      {tab.title}
+                      <span style={{
+                        minWidth: '20px',
+                        padding: '2px 6px',
+                        borderRadius: '999px',
+                        background: isActive ? '#f1eaff' : '#f3f1f5',
+                        color: isActive ? '#60349b' : '#77717f',
+                        fontSize: '11px',
+                        lineHeight: 1.4
+                      }}>
+                        {tab.count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {visibleMyActivities.length === 0 ? (
+                <p className="registration-empty">
+                  {myActivitiesTab === 'upcoming'
+                    ? 'No tenés actividades próximas por ahora.'
+                    : myActivitiesTab === 'finished'
+                      ? 'Todavía no tenés actividades finalizadas.'
+                      : 'No tenés actividades canceladas.'}
+                </p>
               ) : (
                 <div className="registration-list">
-                  {myRegistrations.map(registration => {
-                    const activity = activities.find(item => item.id === registration.activity_id)
+                  {visibleMyActivities.map(({ activity, registration }) => {
+                    const isCancelled = myActivitiesTab === 'cancelled'
                     return (
                       <div
-                        className={`registration-item${activity ? ' registration-item-clickable' : ''}`}
-                        key={registration.id}
-                        role={activity ? 'link' : undefined}
-                        tabIndex={activity ? 0 : undefined}
-                        aria-label={activity ? `Abrir actividad ${activity.title}` : undefined}
-                        onClick={() => {
-                          if (activity) navigate(`/actividad/${activity.id}`)
-                        }}
+                        className="registration-item registration-item-clickable"
+                        key={activity.id}
+                        role="link"
+                        tabIndex={0}
+                        aria-label={`Abrir actividad ${activity.title}`}
+                        onClick={() => navigate(`/actividad/${activity.id}`)}
                         onKeyDown={event => {
-                          if (activity && (event.key === 'Enter' || event.key === ' ')) {
+                          if (event.key === 'Enter' || event.key === ' ') {
                             event.preventDefault()
                             navigate(`/actividad/${activity.id}`)
                           }
                         }}
                       >
                         <div>
-                          <strong>{activity?.title || 'Actividad'}</strong>
-                          <span>{activity ? formatDate(activity.starts_at) : ''}</span>
+                          <strong>{activity.title || 'Actividad'}</strong>
+                          <span>{activity.starts_at ? formatDate(activity.starts_at) : ''}</span>
                         </div>
-{registration.status === 'accepted' || registration.status === 'confirmed' ? (
-  <div className="activity-participation-message">
-<span className="activity-participation-icon">
-    &#128522;
-</span>
-    <span>{registrationStatusLabel(registration.status)}</span>
-  </div>
-) : (
-  <span className={`registration-status status-${registration.status}`}>
-    {registrationStatusLabel(registration.status)}
-  </span>
-)}  
+
+                        {isCancelled ? (
+                          <span className="registration-status status-cancelled">
+                            Actividad cancelada
+                          </span>
+                        ) : registration?.status === 'accepted' || registration?.status === 'confirmed' ? (
+                          <div className="activity-participation-message">
+                            <span className="activity-participation-icon" aria-hidden="true">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="m5 12.5 4.2 4.2L19 7" />
+                              </svg>
+                            </span>
+                            <span>{registrationStatusLabel(registration.status)}</span>
+                          </div>
+                        ) : (
+                          <span className={`registration-status status-${registration?.status || 'pending'}`}>
+                            {registrationStatusLabel(registration?.status || 'pending')}
+                          </span>
+                        )}
                       </div>
                     )
                   })}
@@ -1862,24 +2298,50 @@ async function saveProfile(event) {
                 <form onSubmit={handlePasswordRecovery}>
                   <label>
                     Nueva contraseña
-                    <input
-                      type="password"
-                      value={newPassword}
-                      onChange={e => setNewPassword(e.target.value)}
-                      minLength={8}
-                      required
-                    />
+                    <div className="password-input-wrapper" style={{ position: 'relative', width: '100%' }}>
+                      <input
+                        type={showNewPassword ? 'text' : 'password'}
+                        value={newPassword}
+                        onChange={e => setNewPassword(e.target.value)}
+      minLength={8}
+                        required
+                        style={{ width: '100%', boxSizing: 'border-box', paddingRight: '48px' }}
+                      />
+                      <button
+                        type="button"
+                        className="password-toggle"
+                        onClick={() => setShowNewPassword(previous => !previous)}
+                        aria-label={showNewPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        title={showNewPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 0, background: 'transparent', padding: '6px', margin: 0, cursor: 'pointer', color: 'inherit' }}
+                      >
+                        <PasswordEyeIcon visible={showNewPassword} />
+                      </button>
+                    </div>
                   </label>
 
                   <label>
                     Confirmar nueva contraseña
-                    <input
-                      type="password"
-                      value={confirmNewPassword}
-                      onChange={e => setConfirmNewPassword(e.target.value)}
-                      minLength={8}
-                      required
-                    />
+                    <div className="password-input-wrapper" style={{ position: 'relative', width: '100%' }}>
+                      <input
+                        type={showConfirmNewPassword ? 'text' : 'password'}
+                        value={confirmNewPassword}
+                        onChange={e => setConfirmNewPassword(e.target.value)}
+      minLength={8}
+                        required
+                        style={{ width: '100%', boxSizing: 'border-box', paddingRight: '48px' }}
+                      />
+                      <button
+                        type="button"
+                        className="password-toggle"
+                        onClick={() => setShowConfirmNewPassword(previous => !previous)}
+                        aria-label={showConfirmNewPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        title={showConfirmNewPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 0, background: 'transparent', padding: '6px', margin: 0, cursor: 'pointer', color: 'inherit' }}
+                      >
+                        <PasswordEyeIcon visible={showConfirmNewPassword} />
+                      </button>
+                    </div>
                   </label>
 
                   <button className="primary auth-submit" disabled={loading}>
@@ -1926,26 +2388,52 @@ async function saveProfile(event) {
                   </label>
 
                   <label>
-                    Contraseña
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      minLength={8}
-                      required
-                    />
-                  </label>
+  Contraseña
+  <div className="password-input-wrapper" style={{ position: 'relative', width: '100%' }}>
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+      minLength={8}
+                        required
+                        style={{ width: '100%', boxSizing: 'border-box', paddingRight: '48px' }}
+                      />
+                      <button
+                        type="button"
+                        className="password-toggle"
+                        onClick={() => setShowPassword(previous => !previous)}
+                        aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        title={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 0, background: 'transparent', padding: '6px', margin: 0, cursor: 'pointer', color: 'inherit' }}
+                      >
+                        <PasswordEyeIcon visible={showPassword} />
+                      </button>
+                    </div>
+</label>
 
                   {authMode === 'register' && (
                     <label>
-                      Confirmar contraseña
+  Confirmar contraseña
+  <div className="password-input-wrapper" style={{ position: 'relative', width: '100%' }}>
                       <input
-                        type="password"
+                        type={showConfirmPassword ? 'text' : 'password'}
                         value={confirmPassword}
                         onChange={e => setConfirmPassword(e.target.value)}
                         required
+                        style={{ width: '100%', boxSizing: 'border-box', paddingRight: '48px' }}
                       />
-                    </label>
+                      <button
+                        type="button"
+                        className="password-toggle"
+                        onClick={() => setShowConfirmPassword(previous => !previous)}
+                        aria-label={showConfirmPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        title={showConfirmPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 0, background: 'transparent', padding: '6px', margin: 0, cursor: 'pointer', color: 'inherit' }}
+                      >
+                        <PasswordEyeIcon visible={showConfirmPassword} />
+                      </button>
+                    </div>
+</label>
                   )}
 
                   <button className="primary auth-submit" disabled={loading}>
@@ -2576,6 +3064,26 @@ async function saveProfile(event) {
                   <h3 className="activity-card-title">
                     {activity.title}
                   </h3>
+                  <button
+                    type="button"
+                    className="activity-share-button"
+                    aria-label={`Compartir ${activity.title}`}
+                    onClick={() => shareActivity(activity)}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="18" cy="5" r="3" />
+                      <circle cx="6" cy="12" r="3" />
+                      <circle cx="18" cy="19" r="3" />
+                      <path d="m8.7 10.7 6.6-4.4M8.7 13.3l6.6 4.4" />
+                    </svg>
+                    Compartir
+                  </button>
+                  {shareFeedbackActivityId === activity.id && (
+                    <span className="activity-share-feedback" role="status">Enlace copiado</span>
+                  )}
+                  {shareFeedbackActivityId === `error-${activity.id}` && (
+                    <span className="activity-share-feedback" role="status">No se pudo compartir el enlace</span>
+                  )}
 
                   {(() => {
                     const timelineStatus = getActivityTimelineStatus(activity, currentTime)
@@ -2663,8 +3171,10 @@ async function saveProfile(event) {
  <div className="activity-registration-result">
   {registration.status === 'accepted' || registration.status === 'confirmed' ? (
     <div className="activity-participation-message">
-      <span className="activity-participation-icon">
-        &#128522;
+      <span className="activity-participation-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+          <path d="m5 12.5 4.2 4.2L19 7" />
+        </svg>
       </span>
       <span>{registrationStatusLabel(registration.status)}</span>
      </div>
@@ -2702,8 +3212,12 @@ async function saveProfile(event) {
                       <div className="activity-admin-heading">
                         <h4>Administrar actividad</h4>
                         <div className="activity-admin-actions">
-                          <button type="button" className="secondary" onClick={() => startEditingActivity(activity)} disabled={adminLoading}>Editar</button>
-                          <button type="button" className="secondary danger-button" onClick={() => deleteActivity(activity)} disabled={adminLoading}>Eliminar</button>
+                          {getActivityTimelineStatus(activity, currentTime) === 'upcoming' ? (
+                            <button type="button" className="secondary" onClick={() => startEditingActivity(activity)} disabled={adminLoading}>Editar</button>
+                          ) : (
+                            <span className="activity-edit-locked" role="status">Edición cerrada: la actividad ya comenzó</span>
+                          )}
+                          <button type="button" className="secondary danger-button" onClick={() => openCancellationDialog(activity)} disabled={adminLoading || activity.status === 'cancelled'}>Cancelar actividad</button>
                         </div>
                       </div>
 
@@ -2832,7 +3346,66 @@ async function saveProfile(event) {
       </footer>
     </div>
 
-    {editingActivity && createPortal(
+    {cancellationTarget && createPortal(
+      <div
+        className="activity-modal-overlay"
+        onClick={() => !adminLoading && setCancellationTarget(null)}
+        role="presentation"
+      >
+        <section
+          className="activity-edit-form"
+          onClick={event => event.stopPropagation()}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="activity-cancel-title"
+        >
+          <div className="activity-edit-header">
+            <div>
+              <span className="tag">GESTIÓN DE ACTIVIDAD</span>
+              <h2 id="activity-cancel-title">Cancelar actividad</h2>
+              <p>Se conservarán las inscripciones y se avisará a las personas confirmadas.</p>
+            </div>
+            <button
+              type="button"
+              className="activity-edit-close"
+              aria-label="Cerrar"
+              onClick={() => setCancellationTarget(null)}
+              disabled={adminLoading}
+            >✕</button>
+          </div>
+          <p><strong>{cancellationTarget.title}</strong></p>
+          <label htmlFor="activity-cancellation-reason">Motivo de la cancelación (opcional)</label>
+          <textarea
+            id="activity-cancellation-reason"
+            rows={4}
+            maxLength={1000}
+            value={cancellationReason}
+            onChange={event => setCancellationReason(event.target.value)}
+            placeholder="Si querés, explicá brevemente por qué se cancela."
+            disabled={adminLoading}
+          />
+          <small>{cancellationReason.length}/1000 caracteres</small>
+          {adminMessage && <p className="activity-edit-message" role="status">{adminMessage}</p>}
+          <div className="create-actions">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setCancellationTarget(null)}
+              disabled={adminLoading}
+            >Volver</button>
+            <button
+              type="button"
+              className="primary danger-button"
+              onClick={handleCancelActivity}
+              disabled={adminLoading}
+            >{adminLoading ? 'Cancelando...' : 'Confirmar cancelación'}</button>
+          </div>
+        </section>
+      </div>,
+      document.body
+    )}
+
+    {editingActivity && getActivityTimelineStatus(editingActivity, currentTime) === 'upcoming' && createPortal(
       <div className="activity-modal-overlay"
         onClick={() => !adminLoading && setEditingActivityId(null)}
         role="presentation">
@@ -2977,3 +3550,4 @@ async function saveProfile(event) {
 }
 
 export default App
+

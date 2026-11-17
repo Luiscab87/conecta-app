@@ -10,9 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor-firebase/messaging": "^8.6.0",
     "@capacitor/android": "^8.6.0",
+    "@capacitor/app": "^8.0.0",
     "@capacitor/core": "^8.6.0",
     "@supabase/supabase-js": "^2.119.0",
+    "firebase": "^12.19.0",
     "leaflet": "^1.9.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
