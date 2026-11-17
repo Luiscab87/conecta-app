@@ -44,6 +44,7 @@ const emptyActivity = {
   title: '',
   description: '',
   category: '',
+  categories: [],
   starts_at: '',
   ends_at: '',
   city: 'Alta Gracia',
@@ -59,14 +60,21 @@ const emptyActivity = {
   signup_deadline: ''
 }
 
+function getActivityCategories(activity) {
+  if (Array.isArray(activity?.categories) && activity.categories.length > 0) {
+    return activity.categories.filter(Boolean).slice(0, 3)
+  }
+  return activity?.category ? [activity.category] : []
+}
+
 function getActivityTimelineStatus(activity, now = new Date()) {
-  const start = new Date(activity.starts_at).getTime()
-  const end = new Date(activity.ends_at).getTime()
+  const start = new Date(activity?.starts_at).getTime()
+  const end = activity?.ends_at ? new Date(activity.ends_at).getTime() : NaN
   const current = now.getTime()
 
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return 'upcoming'
+  if (!Number.isFinite(start)) return 'finished'
   if (current < start) return 'upcoming'
-  if (current < end) return 'in_progress'
+  if (!Number.isFinite(end) || current < end) return 'in_progress'
   return 'finished'
 }
 
@@ -414,6 +422,7 @@ const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false)
         title,
         description,
         category,
+        categories,
         starts_at,
         ends_at,
         city,
@@ -572,6 +581,11 @@ useEffect(() => {
       return
     }
 
+    if (activity.status === 'cancelled' || getActivityTimelineStatus(activity, new Date()) !== 'upcoming') {
+      setRegistrationMessage('Las inscripciones están cerradas porque la actividad ya comenzó o finalizó.')
+      return
+    }
+
     setRegistrationLoading(true)
     setRegistrationMessage('')
 
@@ -598,6 +612,13 @@ useEffect(() => {
   }
 
   async function handleManageRegistration(registrationId, newStatus) {
+    const targetRegistration = receivedRegistrations.find(item => item.id === registrationId)
+    const targetActivity = activities.find(item => item.id === targetRegistration?.activity_id)
+    if (!targetActivity || targetActivity.status === 'cancelled' || getActivityTimelineStatus(targetActivity, new Date()) !== 'upcoming') {
+      setRegistrationMessage('Ya no se pueden gestionar solicitudes porque la actividad comenzó o finalizó.')
+      return
+    }
+
     setRegistrationLoading(true)
     setRegistrationMessage('')
 
@@ -649,6 +670,7 @@ useEffect(() => {
       title: activity.title || '',
       description: activity.description || '',
       category: activity.category || '',
+      categories: getActivityCategories(activity),
       starts_at: toDateTimeLocal(activity.starts_at),
       ends_at: toDateTimeLocal(activity.ends_at),
       city: activity.city || '',
@@ -671,6 +693,16 @@ useEffect(() => {
     setEditActivityForm(previous => ({ ...previous, [field]: value }))
   }
 
+  function toggleEditCategory(category) {
+    setEditActivityForm(previous => {
+      const current = getActivityCategories(previous)
+      const next = current.includes(category)
+        ? current.filter(item => item !== category)
+        : current.length < 3 ? [...current, category] : current
+      return { ...previous, categories: next, category: next[0] || '' }
+    })
+  }
+
   async function saveEditedActivity(event, activity) {
     console.log('[Conectá] Entró a saveEditedActivity', { activityId: activity?.id, title: activity?.title })
     event.preventDefault()
@@ -681,7 +713,7 @@ useEffect(() => {
       return
     }
     if (!editActivityForm.title.trim() || !editActivityForm.description.trim() ||
-        !editActivityForm.category || !editActivityForm.starts_at ||
+        !editActivityForm.categories?.length || editActivityForm.categories.length > 3 || !editActivityForm.starts_at ||
         !editActivityForm.ends_at ||
         !editActivityForm.city.trim() || !editActivityForm.meeting_point.trim()) {
       setAdminMessage('Completá todos los campos obligatorios.')
@@ -783,7 +815,8 @@ useEffect(() => {
       const { error } = await supabase.from('activities').update({
         title: editActivityForm.title.trim(),
         description: editActivityForm.description.trim(),
-        category: editActivityForm.category,
+        category: editActivityForm.categories[0],
+        categories: editActivityForm.categories,
         ...updatedValues,
         capacity,
         min_participants: minimum,
@@ -1248,6 +1281,16 @@ async function handleLogout() {
     }))
   }
 
+  function toggleCreateCategory(category) {
+    setActivityForm(previous => {
+      const current = getActivityCategories(previous)
+      const next = current.includes(category)
+        ? current.filter(item => item !== category)
+        : current.length < 3 ? [...current, category] : current
+      return { ...previous, categories: next, category: next[0] || '' }
+    })
+  }
+
   // Crear actividad en Supabase
   async function handleCreateActivity(event) {
     event.preventDefault()
@@ -1260,7 +1303,7 @@ async function handleLogout() {
 
     if (!activityForm.title.trim() ||
         !activityForm.description.trim() ||
-        !activityForm.category ||
+        !activityForm.categories?.length || activityForm.categories.length > 3 ||
         !activityForm.starts_at ||
         !activityForm.ends_at ||
         !activityForm.city.trim() ||
@@ -1333,7 +1376,8 @@ async function handleLogout() {
       organizer_id: session.user.id,
       title: activityForm.title.trim(),
       description: activityForm.description.trim(),
-      category: activityForm.category,
+      category: activityForm.categories[0],
+      categories: activityForm.categories,
       starts_at: startDate.toISOString(),
       ends_at: endDate.toISOString(),
       city: activityForm.city.trim(),
@@ -1587,7 +1631,8 @@ async function saveProfile(event) {
   const filteredActivities = activities.filter(activity => {
     const activityDate = new Date(activity.starts_at)
     const activityDateKey = getLocalDateKey(activityDate)
-    const searchableText = `${activity.title || ''} ${activity.description || ''} ${activity.category || ''}`
+    const activityCategories = getActivityCategories(activity)
+    const searchableText = `${activity.title || ''} ${activity.description || ''} ${activityCategories.join(' ')} ${activity.category || ''}`
       .toLocaleLowerCase('es')
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
@@ -1597,7 +1642,7 @@ async function saveProfile(event) {
     // Varias categorías funcionan con OR: alcanza con coincidir con una.
     if (
       selectedCategories.length > 0 &&
-      !selectedCategories.includes(activity.category)
+      !activityCategories.some(category => selectedCategories.includes(category))
     ) return false
 
     if (
@@ -2142,6 +2187,7 @@ async function saveProfile(event) {
                           <span>{participant?.city || 'Ciudad no indicada'}</span>
                           <small>Actividad: {activity?.title || 'Actividad'}</small>
                         </div>
+                        {activity && activity.status !== 'cancelled' && getActivityTimelineStatus(activity, currentTime) === 'upcoming' ? (
                         <div className="request-actions">
                           <button
                             className="primary request-accept"
@@ -2160,6 +2206,9 @@ async function saveProfile(event) {
                             Rechazar
                           </button>
                         </div>
+                        ) : (
+                          <small className="activity-edit-locked">La actividad comenzó o finalizó: solicitud cerrada.</small>
+                        )}
                       </div>
                     )
                   })}
@@ -2179,7 +2228,23 @@ async function saveProfile(event) {
           <div className="profile-card">
             <div className="profile-heading">
               <div>
-                <h2>Mi perfil</h2>
+                <h2>
+                  <svg
+                    className="profile-heading-icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <circle cx="12" cy="8" r="4" />
+                    <path d="M5 21v-1a7 7 0 0 1 14 0v1" />
+                  </svg>
+                  Mi perfil
+                </h2>
                 <p>Contale a la comunidad un poco sobre vos.</p>
               </div>
             </div>
@@ -2559,19 +2624,25 @@ async function saveProfile(event) {
                 </div>
 
                 <div className="form-grid">
-                  <label>
-                    Categoría *
-                    <select
-                      value={activityForm.category}
-                      onChange={e => updateActivityField('category', e.target.value)}
-                      required
-                    >
-                      <option value="">Elegí una categoría</option>
-                      {categories.map(category => (
-                        <option key={category} value={category}>{category}</option>
-                      ))}
-                    </select>
-                  </label>
+                  <div className="activity-category-selector">
+                    <strong>Categorías * (elegí hasta 3)</strong>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '9px' }}>
+                      {categories.map(category => {
+                        const selected = getActivityCategories(activityForm).includes(category)
+                        return (
+                          <button key={category} type="button" aria-pressed={selected}
+                            onClick={() => toggleCreateCategory(category)}
+                            disabled={!selected && getActivityCategories(activityForm).length >= 3}
+                            style={{ border: selected ? '1px solid #8050c6' : '1px solid #e4ddec', borderRadius: '999px', padding: '8px 12px', background: selected ? '#f1eaff' : '#fff', color: selected ? '#60349b' : '#51485c', fontSize: '13px', fontWeight: selected ? 700 : 500, cursor: 'pointer', opacity: !selected && getActivityCategories(activityForm).length >= 3 ? .45 : 1 }}>
+                            {selected ? '✓ ' : ''}{category}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <small style={{ display: 'block', marginTop: '7px', color: '#786d83' }}>
+                      {getActivityCategories(activityForm).length}/3 seleccionadas
+                    </small>
+                  </div>
 
                   <label>
                     Ciudad *
@@ -3047,8 +3118,8 @@ async function saveProfile(event) {
 >
                   <div className="card-image reading">
   <img
-    src={categoryImages[activity.category] || categoryImages['Otros']}
-    alt={`Imagen de la categoría ${activity.category || 'Otros'}`}
+    src={categoryImages[getActivityCategories(activity)[0]] || categoryImages['Otros']}
+    alt={`Imagen de la categoría ${getActivityCategories(activity)[0] || 'Otros'}`}
     loading="lazy"
     style={{
       display: 'block',
@@ -3059,7 +3130,11 @@ async function saveProfile(event) {
   />
 </div>
 
-                  <span className="activity-category">{activity.category}</span>
+                  <div className="activity-category-list" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {getActivityCategories(activity).map(category => (
+                      <span className="activity-category" key={category}>{category}</span>
+                    ))}
+                  </div>
 
                   <h3 className="activity-card-title">
                     {activity.title}
@@ -3186,7 +3261,7 @@ async function saveProfile(event) {
 </div>
   )
 }
-                      return (
+                      return getActivityTimelineStatus(activity, currentTime) === 'upcoming' && activity.status !== 'cancelled' ? (
                         <button
                           className="primary activity-join-button"
                           type="button"
@@ -3195,9 +3270,11 @@ async function saveProfile(event) {
                         >
                           {registrationLoading ? 'Procesando...' : 'Quiero participar'}
                         </button>
+                      ) : (
+                        <p className="activity-registration-result" role="status">Inscripciones cerradas: la actividad comenzó o finalizó.</p>
                       )
                     })()
-                  ) : (
+                  ) : getActivityTimelineStatus(activity, currentTime) === 'upcoming' && activity.status !== 'cancelled' ? (
                     <button
                       className="primary activity-join-button"
                       type="button"
@@ -3205,6 +3282,8 @@ async function saveProfile(event) {
                     >
                       Quiero participar
                     </button>
+                  ) : (
+                    <p className="activity-registration-result" role="status">Inscripciones cerradas: la actividad comenzó o finalizó.</p>
                   )}
 
                   {expandedActivityId === activity.id && session?.user?.id === activity.organizer_id && (
@@ -3289,7 +3368,7 @@ async function saveProfile(event) {
                 {registrationStatusLabel(registration.status)}
               </span>
 
-              {registration.status === 'pending' && (
+              {registration.status === 'pending' && getActivityTimelineStatus(activity, currentTime) === 'upcoming' && activity.status !== 'cancelled' && (
                 <div className="request-actions">
                   <button
                     className="primary request-accept"
@@ -3432,12 +3511,25 @@ async function saveProfile(event) {
             <textarea rows={4} value={editActivityForm.description} onChange={e => updateEditActivityField('description', e.target.value)} required />
           </label>
           <div className="form-grid">
-            <label>Categoría *
-              <select value={editActivityForm.category} onChange={e => updateEditActivityField('category', e.target.value)} required>
-                <option value="">Elegí una categoría</option>
-                {categories.map(category => <option key={category} value={category}>{category}</option>)}
-              </select>
-            </label>
+            <div className="activity-category-selector">
+              <strong>Categorías * (elegí hasta 3)</strong>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '9px' }}>
+                {categories.map(category => {
+                  const selected = getActivityCategories(editActivityForm).includes(category)
+                  return (
+                    <button key={category} type="button" aria-pressed={selected}
+                      onClick={() => toggleEditCategory(category)}
+                      disabled={!selected && getActivityCategories(editActivityForm).length >= 3}
+                      style={{ border: selected ? '1px solid #8050c6' : '1px solid #e4ddec', borderRadius: '999px', padding: '8px 12px', background: selected ? '#f1eaff' : '#fff', color: selected ? '#60349b' : '#51485c', fontSize: '13px', fontWeight: selected ? 700 : 500, cursor: 'pointer', opacity: !selected && getActivityCategories(editActivityForm).length >= 3 ? .45 : 1 }}>
+                      {selected ? '✓ ' : ''}{category}
+                    </button>
+                  )
+                })}
+              </div>
+              <small style={{ display: 'block', marginTop: '7px', color: '#786d83' }}>
+                {getActivityCategories(editActivityForm).length}/3 seleccionadas
+              </small>
+            </div>
             <label>Ciudad *
               <input
                 value={editActivityForm.city}

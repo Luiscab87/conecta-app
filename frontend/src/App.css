@@ -4468,15 +4468,12 @@ textarea:focus {
   font-weight:800;
   letter-spacing:-.8px;
 }
-.profile-section .profile-heading h2::before{
-  content:"";
-  display:inline-block;
+.profile-section .profile-heading .profile-heading-icon{
+  display:block;
+  flex:0 0 30px;
   width:30px;
   height:30px;
-  border:3px solid #7133bd;
-  border-radius:50%;
-  background:radial-gradient(circle at 50% 37%,#7133bd 0 4px,transparent 4.5px),radial-gradient(ellipse at 50% 100%,#7133bd 0 8px,transparent 8.5px);
-  box-sizing:border-box;
+  color:#7133bd;
 }
 .profile-section .profile-heading p{
   color:#65527e;
@@ -4731,3 +4728,4 @@ textarea:focus {
     max-height: calc(100vh - 90px) !important;
   }
 }
+git status
