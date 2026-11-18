@@ -4728,3 +4728,81 @@ textarea:focus {
     max-height: calc(100vh - 90px) !important;
   }
 }
+
+/* Perfil ampliado: intereses seleccionables */
+.profile-interests-field {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 4px 0 8px;
+}
+
+.profile-interests-title {
+  color: #403950;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.profile-interests-field > p {
+  margin: 0;
+  color: #858091;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.profile-interests-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 3px;
+}
+
+.profile-interest-chip {
+  appearance: none;
+  border: 1px solid #e3dced;
+  border-radius: 999px;
+  background: #fff;
+  color: #5f586d;
+  padding: 9px 13px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  cursor: pointer;
+  transition: background .18s ease, border-color .18s ease, color .18s ease, transform .18s ease;
+}
+
+.profile-interest-chip:hover {
+  border-color: #9a78df;
+  transform: translateY(-1px);
+}
+
+.profile-interest-chip.is-selected {
+  border-color: #7549cb;
+  background: #7549cb;
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(117, 73, 203, .16);
+}
+
+.profile-interest-chip:focus-visible {
+  outline: 3px solid rgba(117, 73, 203, .25);
+  outline-offset: 2px;
+}
+
+.auth-field-help {
+  color: #858091;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+@media (max-width: 520px) {
+  .profile-interests-options {
+    gap: 7px;
+  }
+
+  .profile-interest-chip {
+    padding: 8px 11px;
+    font-size: 11px;
+  }
+}
