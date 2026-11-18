@@ -22,6 +22,13 @@ function ActivityCommunity({
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [activeTab, setActiveTab] = useState('news')
+  const [memberIds, setMemberIds] = useState([])
+  const [memberNames, setMemberNames] = useState({})
+  const [membersLoading, setMembersLoading] = useState(false)
+  const [membersError, setMembersError] = useState('')
+  const [selectedProfile, setSelectedProfile] = useState(null)
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [profileError, setProfileError] = useState('')
 
   const now = Date.now()
   const activityEndedAt = activity?.ends_at ? new Date(activity.ends_at).getTime() : NaN
@@ -35,12 +42,13 @@ function ActivityCommunity({
     Number.isFinite(activityEndedAt) &&
     now <= activityEndedAt + 30 * 24 * 60 * 60 * 1000
 
-  const isConfirmedParticipant = ['accepted', 'confirmed'].includes(registration?.status)
+  const isConfirmedParticipant = registration?.status === 'confirmed'
   const participantHistoryAvailable = !hasEnded || withinPostActivityWindow
   const canParticipate =
     isOrganizer || (isConfirmedParticipant && participantHistoryAvailable)
   const canReadPosts = isOrganizer || isAdmin || (isConfirmedParticipant && participantHistoryAvailable)
   const canReadMessages = isOrganizer || isAdmin || (isConfirmedParticipant && participantHistoryAvailable)
+  const canViewMembers = Boolean(isOrganizer || isAdmin || isConfirmedParticipant)
   // En una actividad cancelada, solo el organizador puede publicar novedades.
   const canPublish = isCancelled
     ? Boolean(isOrganizer)
@@ -111,19 +119,21 @@ function ActivityCommunity({
 
       if (userIds.length > 0) {
         const { data: profileData, error: profileError } =
-          await supabase
-            .from('profiles')
-            .select('id, display_name')
-            .in('id', userIds)
+          await supabase.rpc('get_activity_member_names', {
+            p_activity_id: activity.id,
+            p_user_ids: userIds
+          })
 
         if (!profileError) {
           const profileMap = {}
 
           ;(profileData || []).forEach(profile => {
-            profileMap[profile.id] = profile.display_name
+            profileMap[profile.user_id] = profile.display_name
           })
 
           setProfiles(profileMap)
+        } else {
+          console.error('Error cargando nombres de la comunidad:', profileError.message)
         }
 
         const postAuthorIds = [
@@ -170,8 +180,97 @@ function ActivityCommunity({
   }, [activity?.id, canReadPosts, canReadMessages, canParticipate, isAdmin])
 
   useEffect(() => {
-    loadCommunity()
-  }, [loadCommunity])
+    let active = true
+
+    async function loadMembers() {
+      if (!activity?.id || !canViewMembers) {
+        setMemberIds([])
+        setMemberNames({})
+        setSelectedProfile(null)
+        return
+      }
+
+      setMembersLoading(true)
+      setMembersError('')
+
+      try {
+        const { data: idsData, error: idsError } = await supabase.rpc(
+          'get_activity_member_ids',
+          { p_activity_id: activity.id }
+        )
+
+        if (idsError) throw idsError
+
+        const ids = [...new Set((idsData || []).map(item => item.user_id).filter(Boolean))]
+        if (ids.length === 0) {
+          if (active) {
+            setMemberIds([])
+            setMemberNames({})
+          }
+          return
+        }
+
+        const { data: namesData, error: namesError } = await supabase.rpc(
+          'get_activity_member_names',
+          {
+            p_activity_id: activity.id,
+            p_user_ids: ids
+          }
+        )
+
+        if (namesError) throw namesError
+
+        if (!active) return
+
+        const namesMap = Object.fromEntries(
+          (namesData || []).map(item => [item.user_id, item.display_name || 'Usuario'])
+        )
+
+        setMemberIds(ids)
+        setMemberNames(namesMap)
+      } catch (err) {
+        console.error('Error cargando participantes de la actividad:', err)
+        if (active) setMembersError(err.message || 'No se pudieron cargar los participantes.')
+      } finally {
+        if (active) setMembersLoading(false)
+      }
+    }
+
+    loadMembers()
+
+    return () => {
+      active = false
+    }
+  }, [activity?.id, canViewMembers])
+
+  async function openMemberProfile(userId) {
+    if (!canViewMembers || !userId || profileLoading) return
+
+    setProfileLoading(true)
+    setProfileError('')
+    setSelectedProfile(null)
+
+    try {
+      const { data, error } = await supabase.rpc('get_activity_public_profile', {
+        p_activity_id: activity.id,
+        p_target_user_id: userId
+      })
+
+      if (error) throw error
+
+      const profile = Array.isArray(data) ? data[0] : data
+      if (!profile) {
+        throw new Error('Este perfil no está disponible para esta actividad.')
+      }
+
+      setSelectedProfile(profile)
+    } catch (err) {
+      console.error('Error cargando perfil del participante:', err)
+      setProfileError(err.message || 'No se pudo cargar el perfil.')
+    } finally {
+      setProfileLoading(false)
+    }
+  }
 
   function formatMessageDate(date) {
     return new Date(date).toLocaleString('es-AR', {
@@ -412,7 +511,7 @@ function ActivityCommunity({
     )
   }
 
-  if (!canReadPosts) {
+  if (!canReadPosts && !canViewMembers) {
     return !participantHistoryAvailable ? (
       <section className="activity-community activity-community-closed">
         <p className="activity-community-empty">El período de acceso a la comunidad finalizó. Podés seguir consultando los datos básicos de esta actividad desde tu historial.</p>
@@ -489,13 +588,18 @@ function ActivityCommunity({
         aria-label="Secciones de la actividad"
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+          gridTemplateColumns: canViewMembers && canReadPosts
+            ? 'repeat(4, minmax(0, 1fr))'
+            : canViewMembers
+              ? 'minmax(0, 1fr)'
+              : 'repeat(3, minmax(0, 1fr))',
           gap: 8,
           margin: '18px 0',
           width: '100%',
           minWidth: 0
         }}
       >
+        {canReadPosts && <>
         <button
           type="button"
           role="tab"
@@ -531,6 +635,25 @@ function ActivityCommunity({
           <span style={tabLabelStyle}>Experiencias</span>
           <small style={tabAvailabilityStyle}>{tabAvailability.experiences}</small>
         </button>
+        </>}
+
+        {canViewMembers && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'members'}
+            onClick={() => {
+              setSelectedProfile(null)
+              setProfileError('')
+              setActiveTab('members')
+            }}
+            style={tabButtonStyle(activeTab === 'members')}
+          >
+            <span aria-hidden="true">👥</span>
+            <span style={tabLabelStyle}>Participantes</span>
+            <small style={tabAvailabilityStyle}>Perfiles</small>
+          </button>
+        )}
       </div>
 
       {activeTab === 'news' && (
@@ -575,6 +698,128 @@ function ActivityCommunity({
       )}
 
       {activeTab === 'questions' && !canReadMessages && <p className="activity-community-empty">Las preguntas están disponibles para el organizador y los participantes confirmados.</p>}
+
+      {activeTab === 'members' && canViewMembers && (
+        <section className="activity-community-members" role="tabpanel">
+          {selectedProfile ? (
+            <div className="activity-community-profile" style={{
+              border: '1px solid var(--border, #e5e7eb)',
+              borderRadius: 16,
+              padding: 20,
+              maxWidth: 560,
+              margin: '0 auto'
+            }}>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  setSelectedProfile(null)
+                  setProfileError('')
+                }}
+                style={{ marginBottom: 18 }}
+              >
+                ← Volver a la actividad
+              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 18 }}>
+                {selectedProfile.avatar_url ? (
+                  <img
+                    src={selectedProfile.avatar_url}
+                    alt={`Foto de ${selectedProfile.display_name || 'participante'}`}
+                    style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <div aria-hidden="true" style={{
+                    width: 88, height: 88, borderRadius: '50%',
+                    display: 'grid', placeItems: 'center',
+                    background: 'var(--surface-secondary, #f2ecfa)',
+                    fontSize: 34
+                  }}>👤</div>
+                )}
+                <div>
+                  <h3 style={{ margin: '0 0 6px' }}>{selectedProfile.display_name || 'Usuario'}</h3>
+                  {selectedProfile.age != null && <p style={{ margin: 0 }}>{selectedProfile.age} años</p>}
+                  {selectedProfile.city && <p style={{ margin: '4px 0 0' }}>{selectedProfile.city}</p>}
+                </div>
+              </div>
+
+              {selectedProfile.bio && (
+                <div style={{ marginBottom: 18 }}>
+                  <h4>Sobre mí</h4>
+                  <p style={{ whiteSpace: 'pre-wrap' }}>{selectedProfile.bio}</p>
+                </div>
+              )}
+
+              <div>
+                <h4>Intereses</h4>
+                {Array.isArray(selectedProfile.interests) && selectedProfile.interests.length > 0 ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {selectedProfile.interests.map(interest => (
+                      <span key={interest} style={{
+                        borderRadius: 999,
+                        padding: '6px 11px',
+                        background: 'var(--surface-secondary, #f2ecfa)',
+                        color: 'var(--primary, #8050b8)',
+                        fontSize: 13
+                      }}>{interest}</span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="activity-community-empty">Todavía no agregó intereses.</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="activity-community-section-title">
+                <h3>Participantes de la actividad</h3>
+                <p>Podés consultar los perfiles de las personas que forman parte de esta actividad.</p>
+              </div>
+
+              {profileLoading && <p>Cargando perfil...</p>}
+              {profileError && <p className="activity-community-feedback error" role="alert">{profileError}</p>}
+              {membersError && <p className="activity-community-feedback error" role="alert">{membersError}</p>}
+
+              {membersLoading ? (
+                <p>Cargando participantes...</p>
+              ) : memberIds.length === 0 ? (
+                <p className="activity-community-empty">Todavía no hay participantes confirmados.</p>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+                  {memberIds.map(userId => (
+                    <button
+                      key={userId}
+                      type="button"
+                      className="secondary"
+                      onClick={() => openMemberProfile(userId)}
+                      disabled={profileLoading}
+                      style={{
+                        minHeight: 64,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'flex-start',
+                        gap: 10,
+                        textAlign: 'left',
+                        padding: '12px'
+                      }}
+                    >
+                      <span aria-hidden="true" style={{
+                        width: 34, height: 34, borderRadius: '50%',
+                        display: 'grid', placeItems: 'center',
+                        background: 'var(--surface-secondary, #f2ecfa)',
+                        flexShrink: 0
+                      }}>👤</span>
+                      <span>{userId === activity.organizer_id
+                        ? `${memberNames[userId] || 'Organizador'} · Organiza`
+                        : memberNames[userId] || 'Participante'}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </section>
+      )}
 
       {activeTab === 'experiences' && (
         (isCompleted || isCancelled) ? <ActivityComments activity={activity} session={session} registration={registration} isOrganizer={isOrganizer} isAdmin={isAdmin} /> :
