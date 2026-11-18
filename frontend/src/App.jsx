@@ -12,6 +12,52 @@ import './App.css'
 import PushNotificationSettings from './components/PushNotificationSettings'
 
 
+const profileInterestOptions = [
+  'Deportes y actividad física',
+  'Naturaleza y aire libre',
+  'Gastronomía',
+  'Música y espectáculos',
+  'Viajes y turismo',
+  'Arte y cultura',
+  'Juegos y entretenimiento',
+  'Tecnología',
+  'Animales',
+  'Actividades sociales'
+]
+
+function calculateAge(birthDate) {
+  if (!birthDate) return null
+
+  const [year, month, day] = birthDate.split('-').map(Number)
+  if (!year || !month || !day) return null
+
+  const today = new Date()
+  let age = today.getFullYear() - year
+  const birthdayHasPassed =
+    today.getMonth() + 1 > month ||
+    (today.getMonth() + 1 === month && today.getDate() >= day)
+
+  if (!birthdayHasPassed) age -= 1
+  return age
+}
+
+function getTodayDateString() {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getMaxAllowedBirthDate() {
+  const today = new Date()
+  const date = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate())
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 const categories = [
   'Lectura y literatura',
   'Deportes y actividad física',
@@ -170,6 +216,7 @@ function App() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [birthDate, setBirthDate] = useState('')
   // Mostrar u ocultar contraseñas
 const [showPassword, setShowPassword] = useState(false)
 const [showConfirmPassword, setShowConfirmPassword] = useState(false)
@@ -183,6 +230,8 @@ const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false)
   const [avatarUrl, setAvatarUrl] = useState('')
   const [avatarFile, setAvatarFile] = useState(null)
   const [profileSex, setProfileSex] = useState('neutral')
+  const [profileBirthDate, setProfileBirthDate] = useState('')
+  const [profileInterests, setProfileInterests] = useState([])
 
   // Centro de notificaciones
   const [notifications, setNotifications] = useState([])
@@ -359,6 +408,12 @@ const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false)
 
     if (notification.activity_id) {
       navigate(`/actividad/${notification.activity_id}`)
+      return
+    }
+
+    if (notification.type === 'complete_profile') {
+      setActiveSection('profile')
+      setShowProfile(true)
     }
   }
 
@@ -989,7 +1044,7 @@ function registrationStatusLabel(status) {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('display_name, city, bio, avatar_url')
+        .select('display_name, city, bio, avatar_url, birth_date')
         .eq('id', session.user.id)
         .single()
 
@@ -1003,10 +1058,11 @@ function registrationStatusLabel(status) {
         setCity(data.city || '')
         setBio(data.bio || '')
         setAvatarUrl(data.avatar_url || '')
+        setProfileBirthDate(data.birth_date || '')
         setAvatarFile(null)
         const { data: preferences, error: preferencesError } = await supabase
   .from('profile_preferences')
-  .select('sex')
+  .select('sex, interests')
   .eq('user_id', session.user.id)
   .maybeSingle()
 
@@ -1015,6 +1071,7 @@ if (preferencesError) {
   setProfileSex('neutral')
 } else {
   setProfileSex(preferences?.sex || 'neutral')
+  setProfileInterests(Array.isArray(preferences?.interests) ? preferences.interests : [])
 }
       }
 
@@ -1029,6 +1086,8 @@ if (preferencesError) {
       setBio('')
       setAvatarUrl('')
       setAvatarFile(null)
+      setProfileBirthDate('')
+      setProfileInterests([])
       setShowProfile(false)
     }
 
@@ -1045,6 +1104,34 @@ if (preferencesError) {
     if (authMode === 'register' && !name.trim()) {
       setMessage('Ingresá tu nombre.')
       return
+    }
+
+    if (authMode === 'register') {
+      if (!birthDate) {
+        setMessage('Ingresá tu fecha de nacimiento.')
+        return
+      }
+
+      const [birthYear, birthMonth, birthDay] = birthDate.split('-').map(Number)
+      const daysInBirthMonth = new Date(birthYear, birthMonth, 0).getDate()
+      const validCalendarDate =
+        Number.isInteger(birthYear) &&
+        Number.isInteger(birthMonth) &&
+        Number.isInteger(birthDay) &&
+        birthMonth >= 1 &&
+        birthMonth <= 12 &&
+        birthDay >= 1 &&
+        birthDay <= daysInBirthMonth
+
+      if (!validCalendarDate || birthDate > getTodayDateString()) {
+        setMessage('Ingresá una fecha de nacimiento válida.')
+        return
+      }
+
+      if (calculateAge(birthDate) < 18) {
+        setMessage('Tenés que tener al menos 18 años para registrarte en Conectá.')
+        return
+      }
     }
 
     if (authMode === 'register' && password !== confirmPassword) {
@@ -1065,7 +1152,7 @@ if (preferencesError) {
           email: email.trim(),
           password,
           options: {
-            data: { display_name: name.trim() }
+            data: { display_name: name.trim(), birth_date: birthDate }
           }
         })
 
@@ -1509,7 +1596,8 @@ async function saveProfile(event) {
       .from('profile_preferences')
       .upsert({
         user_id: session.user.id,
-        sex: profileSex
+        sex: profileSex,
+        interests: profileInterests
       }, {
         onConflict: 'user_id'
       })
@@ -2307,6 +2395,34 @@ async function saveProfile(event) {
   </select>
 </label>
 
+                <div className="profile-age">
+                  <strong>Edad:</strong>{' '}
+                  {profileBirthDate ? `${calculateAge(profileBirthDate)} años` : 'Sin registrar'}
+                </div>
+
+                <fieldset className="profile-interests">
+                  <legend>Mis intereses <span>(opcional)</span></legend>
+                  <p>Elegí los temas y actividades que más te gustan.</p>
+                  <div className="profile-interest-options">
+                    {profileInterestOptions.map(interest => (
+                      <label key={interest}>
+                        <input
+                          type="checkbox"
+                          checked={profileInterests.includes(interest)}
+                          onChange={e => {
+                            setProfileInterests(previous =>
+                              e.target.checked
+                                ? [...previous, interest]
+                                : previous.filter(item => item !== interest)
+                            )
+                          }}
+                        />
+                        {interest}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+
                 <label>
                   Ciudad
                   <input
@@ -2438,6 +2554,20 @@ async function saveProfile(event) {
                         placeholder="Tu nombre"
                         required
                       />
+                    </label>
+                  )}
+
+                  {authMode === 'register' && (
+                    <label>
+                      Fecha de nacimiento
+                      <input
+                        type="date"
+                        value={birthDate}
+                        onChange={e => setBirthDate(e.target.value)}
+                        max={getMaxAllowedBirthDate()}
+                        required
+                      />
+                      <small>Debés tener al menos 18 años. Tu fecha de nacimiento no será visible para otros usuarios.</small>
                     </label>
                   )}
 
